@@ -43,8 +43,14 @@ from pathlib import Path
 
 from faker import Faker
 
+# ---------------------------------------------------------------------------
+# Reference data
+# ---------------------------------------------------------------------------
+
+# Timestamp format used in every CSV (UTC, no timezone suffix).
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 
+# Product catalog building blocks. Names come out like "Eco Lamp - Navy".
 CATEGORIES = {
     # category: (product nouns, min price, max price)
     "Electronics": (["Headphones", "Speaker", "Charger", "Keyboard", "Mouse", "Monitor"], 15, 400),
@@ -55,10 +61,15 @@ CATEGORIES = {
 }
 ADJECTIVES = ["Classic", "Pro", "Ultra", "Eco", "Smart", "Compact", "Deluxe", "Everyday", "Travel"]
 
+# Monthly subscription prices. Prices rise once, 60% of the way through the
+# date range, and every live subscription is repriced on that day.
 PLAN_PRICES_OLD = {"basic": 9.99, "plus": 19.99, "premium": 49.99}
 PLAN_PRICES_NEW = {"basic": 11.99, "plus": 24.99, "premium": 59.99}
-PLAN_ORDER = ["basic", "plus", "premium"]
+PLAN_ORDER = ["basic", "plus", "premium"]  # cheapest to most expensive
 
+CUSTOMER_SEGMENTS = ["consumer", "small_business", "enterprise"]  # lowest to highest tier
+
+# Column order for each output file.
 COLUMNS = {
     "customers": [
         "customer_id", "first_name", "last_name", "email", "phone", "street_address",
@@ -82,8 +93,32 @@ COLUMNS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Generator
+# ---------------------------------------------------------------------------
+
+
 class Generator:
+    """Builds the change history for all four tables.
+
+    Each gen_* method walks one record at a time through its life: it starts
+    from an initial state, applies changes in time order, and calls emit() to
+    write a row for every version. Products and customers must be generated
+    first, because orders and subscriptions refer to them.
+
+    All randomness goes through self.rng and self.fake, both seeded, so the
+    same seed and arguments always produce the same files.
+    """
+
     def __init__(self, seed: int, start: date, end: date, late_rate: float, dup_rate: float):
+        """
+        Args:
+            seed: random seed for reproducible output.
+            start: first day of the simulated history.
+            end: last day of the simulated history. Changes after this don't exist.
+            late_rate: share of rows that load 1-14 days later than normal.
+            dup_rate: share of rows delivered a second time.
+        """
         self.rng = random.Random(seed)
         self.fake = Faker("en_US")
         self.fake.seed_instance(seed)
@@ -95,12 +130,15 @@ class Generator:
         self.dup_rate = dup_rate
         self.reprice_at = self.start + (self.end - self.start) * 0.6
 
+        # Lightweight lookups filled in by gen_customers() and gen_products(),
+        # used later to make orders and subscriptions consistent with them.
         self.customers: list[dict] = []
         self.products: list[dict] = []
 
     # ---------- helpers ----------
 
     def between(self, a: datetime, b: datetime) -> datetime:
+        """Random timestamp between a and b. Returns a if the range is empty."""
         if b <= a:
             return a
         return a + timedelta(seconds=self.rng.uniform(0, (b - a).total_seconds()))
@@ -141,6 +179,7 @@ class Generator:
         return ts
 
     def typo(self, s: str) -> str:
+        """Swap two neighboring characters, e.g. "Daniel" -> "Dainel"."""
         if len(s) < 3:
             return s + s[-1]
         i = self.rng.randrange(len(s) - 1)
@@ -148,11 +187,19 @@ class Generator:
 
     @staticmethod
     def price_point(x: float) -> float:
+        """Round to a retail-style price ending in .99, e.g. 41.37 -> 41.99."""
         return max(1, int(x)) + 0.99
 
     # ---------- products ----------
 
     def gen_products(self, n: int) -> list[dict]:
+        """Generate n products and their history.
+
+        Possible changes: a price or name typo fixed after creation, 0-3 price
+        changes, and discontinuation (sometimes followed by a hard delete).
+        Also records each product's price history in self.products, so orders
+        are charged the price that applied when they were placed.
+        """
         rng, rows = self.rng, []
         span = self.end - self.start
         for i in range(1, n + 1):
@@ -210,6 +257,7 @@ class Generator:
         return rows
 
     def price_at(self, product: dict, ts: datetime) -> float:
+        """The product's unit price as of ts."""
         price = product["prices"][0][1]
         for changed_at, p in sorted(product["prices"]):
             if changed_at <= ts:
@@ -219,6 +267,7 @@ class Generator:
     # ---------- customers ----------
 
     def new_address(self) -> dict:
+        """A random US street address, as the four address columns."""
         return {
             "street_address": self.fake.street_address(),
             "city": self.fake.city(),
@@ -227,13 +276,22 @@ class Generator:
         }
 
     def us_state(self) -> str:
+        """A 50-states-plus-DC abbreviation (no territories like PR or FM)."""
         return self.fake.state_abbr(include_territories=False, include_freely_associated_states=False)
 
     def new_email(self, first: str, last: str) -> str:
+        """An email built from the customer's name, e.g. jane.doe42@gmail.com."""
         suffix = str(self.rng.randint(1, 99)) if self.rng.random() < 0.4 else ""
         return f"{first}.{last}{suffix}@{self.fake.free_email_domain()}".lower()
 
     def gen_customers(self, n: int) -> list[dict]:
+        """Generate n customers and their history.
+
+        Possible changes: an error at signup that gets corrected (name typo,
+        messy email, wrong state, missing postal code), then address moves,
+        email/phone/last-name changes, marketing opt-in toggles, segment
+        upgrades, and a rare hard delete.
+        """
         rng, fake, rows = self.rng, self.fake, []
         span = self.end - self.start
         for i in range(1, n + 1):
@@ -247,7 +305,7 @@ class Generator:
                 "phone": fake.phone_number() if rng.random() > 0.05 else None,
                 **self.new_address(),
                 "country": "US",
-                "customer_segment": rng.choices(["consumer", "small_business", "enterprise"], [85, 12, 3])[0],
+                "customer_segment": rng.choices(CUSTOMER_SEGMENTS, [85, 12, 3])[0],
                 "marketing_opt_in": rng.random() < 0.6,
                 "created_at": created,
             }
@@ -255,7 +313,8 @@ class Generator:
             if rng.random() < 0.03:
                 state["email"] = state["email"].title()
 
-            # Insert, sometimes with an error that gets corrected.
+            # Insert, sometimes with an error that gets corrected. Each branch
+            # covers a slice of r, so the chances add up to 14% overall.
             r = rng.random()
             if r < 0.05:
                 bad = {**state, "first_name": self.typo(first)}
@@ -267,12 +326,13 @@ class Generator:
                 bad = {**state, "postal_code": None}
             else:
                 bad = None
-            if bad and bad != state:
+            if bad and bad != state:  # a random "wrong" state can match the right one
                 self.emit_corrected(rows, bad, state, created)
             else:
                 self.emit(rows, state, created, "I")
 
-            # Updates over the customer's lifetime.
+            # Updates over the customer's lifetime: each (kind, chance) pair
+            # rolls independently, so a customer can move twice, etc.
             events = []
             for kind, p in [("move", 0.25), ("move", 0.08), ("email", 0.10), ("phone", 0.10),
                             ("opt_in", 0.20), ("segment", 0.08), ("last_name", 0.04)]:
@@ -287,9 +347,9 @@ class Generator:
                     state["phone"] = fake.phone_number()
                 elif kind == "opt_in":
                     state["marketing_opt_in"] = not state["marketing_opt_in"]
-                elif kind == "segment":
-                    idx = ["consumer", "small_business", "enterprise"].index(state["customer_segment"])
-                    state["customer_segment"] = ["consumer", "small_business", "enterprise"][min(idx + 1, 2)]
+                elif kind == "segment":  # move up one tier
+                    idx = CUSTOMER_SEGMENTS.index(state["customer_segment"])
+                    state["customer_segment"] = CUSTOMER_SEGMENTS[min(idx + 1, len(CUSTOMER_SEGMENTS) - 1)]
                 elif kind == "last_name":
                     state["last_name"] = fake.last_name()
                 self.emit(rows, state, ts)
@@ -301,6 +361,7 @@ class Generator:
                 deleted_at = self.between(max(last_event, created), self.end)
                 self.emit(rows, state, deleted_at, "D")
 
+            # "weight" makes a few customers order far more often than most.
             self.customers.append({"id": state["customer_id"], "created": created,
                                    "deleted": deleted_at, "weight": rng.paretovariate(1.5)})
         return rows
@@ -308,6 +369,13 @@ class Generator:
     # ---------- orders ----------
 
     def gen_orders(self, n: int) -> list[dict]:
+        """Generate n orders (one product per order) and their status history.
+
+        Orders are only placed while the customer exists and the product is
+        active, at the product's price at that moment. Possible changes: a
+        wrong quantity fixed after placing, then placed -> shipped ->
+        delivered (or cancelled), a goodwill discount, and returns.
+        """
         rng, rows = self.rng, []
         weights = [c["weight"] for c in self.customers]
 
@@ -376,16 +444,29 @@ class Generator:
     # ---------- subscriptions ----------
 
     def mrr(self, plan: str, period: str, ts: datetime) -> float:
+        """Monthly recurring revenue for a plan at time ts.
+
+        Annual plans cost 10 months' worth per year, so their MRR is lower.
+        """
         price = (PLAN_PRICES_NEW if ts >= self.reprice_at else PLAN_PRICES_OLD)[plan]
         return price if period == "monthly" else round(price * 10 / 12, 2)
 
     def gen_subscriptions(self, share: float) -> list[dict]:
+        """Generate at most one subscription per customer, for a share of customers.
+
+        Each subscription optionally starts with a 14-day trial, then is
+        simulated month by month: upgrades/downgrades, failed payments
+        (past_due), pauses, churn, and the one-time price increase. Some start
+        dates are backdated by mistake and corrected.
+        """
         rng, rows = self.rng, []
         subscribers = rng.sample(self.customers, int(len(self.customers) * share))
         subscribers.sort(key=lambda c: c["created"])
 
         sub_no = 0
         for customer in subscribers:
+            # The subscription can't outlive the customer. Most people
+            # subscribe within a couple of months of signing up.
             limit = customer["deleted"] or self.end
             t = customer["created"] + timedelta(days=rng.expovariate(1 / 60))
             if t >= limit:
@@ -427,6 +508,9 @@ class Generator:
                     self.emit(rows, state, t)
                     continue
 
+            # Monthly simulation. Each month at most one thing happens; the
+            # chances below are per month (cancel 2.5%, plan change 4%,
+            # failed payment 2%, pause 1%). Paused subs resume 40%/month.
             repriced = state["created_at"] >= self.reprice_at
             while True:
                 nxt = t + timedelta(days=30, hours=rng.uniform(-12, 12))
@@ -496,7 +580,13 @@ class Generator:
         return rows + dups
 
 
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+
 def fmt(value) -> str:
+    """Format a value for CSV: empty for None, true/false, ISO dates, 2-decimal floats."""
     if value is None:
         return ""
     if isinstance(value, bool):
@@ -511,6 +601,7 @@ def fmt(value) -> str:
 
 
 def write_csv(path: Path, columns: list[str], rows: list[dict]) -> None:
+    """Write rows to path with the given column order."""
     # Files are ordered the way they'd arrive: by load batch, then change time.
     rows = sorted(rows, key=lambda r: (r["_loaded_at"], r["updated_at"]))
     with path.open("w", newline="") as f:
@@ -521,6 +612,7 @@ def write_csv(path: Path, columns: list[str], rows: list[dict]) -> None:
 
 
 def main() -> None:
+    """Parse arguments, generate all tables, and write the CSVs."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out-dir", type=Path, default=Path(__file__).resolve().parent.parent / "data" / "raw")
     parser.add_argument("--customers", type=int, default=1000)
