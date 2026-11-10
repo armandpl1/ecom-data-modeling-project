@@ -1,0 +1,103 @@
+version: 2
+
+# Bronze layer: cleaned, typed and deduplicated copies of the raw extracts.
+# Grain of every model: one row per (record key, updated_at). The full
+# change history is kept; picking the latest version happens in Silver.
+
+models:
+  - name: stg_customers
+    description: >
+      Customer changes. Names and addresses trimmed, email lowercased,
+      phone reduced to 10 digits plus an optional extension. Duplicate
+      deliveries and same-timestamp corrections are resolved by keeping the
+      row loaded last.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [customer_id, updated_at]
+    columns:
+      - name: customer_id
+        data_tests: [not_null]
+      - name: email
+        description: Lowercased and trimmed.
+        data_tests: [not_null]
+      - name: phone_number
+        description: 10-digit US number without country code. Null when missing in the source (~5%).
+      - name: customer_segment
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [consumer, small_business, enterprise]
+      - name: is_deleted
+        description: True for the row that records a hard delete (_op = 'D').
+      - name: loaded_at
+        description: When the row landed in the warehouse. Breaks ties between rows with the same updated_at.
+        data_tests: [not_null]
+
+  - name: stg_products
+    description: Product changes, typed. Same deduplication rule as stg_customers.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [product_id, updated_at]
+    columns:
+      - name: product_id
+        data_tests: [not_null]
+      - name: unit_price
+        data_tests: [not_null]
+      - name: category
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [Apparel, Books, Electronics, Home, Outdoors]
+
+  - name: stg_orders
+    description: Order status changes, typed. One row per order per change.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [order_id, updated_at]
+    columns:
+      - name: order_id
+        data_tests: [not_null]
+      - name: customer_id
+        data_tests: [not_null]
+      - name: product_id
+        data_tests: [not_null]
+      - name: order_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [placed, shipped, delivered, cancelled, returned]
+      - name: payment_method
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [card, paypal, apple_pay, gift_card]
+
+  - name: stg_subscriptions
+    description: Subscription changes, typed. Dates without a time are named *_on.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [subscription_id, updated_at]
+    columns:
+      - name: subscription_id
+        data_tests: [not_null]
+      - name: customer_id
+        data_tests: [not_null]
+      - name: plan_name
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [basic, plus, premium]
+      - name: billing_period
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [monthly, annual]
+      - name: subscription_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [trialing, active, past_due, paused, cancelled]

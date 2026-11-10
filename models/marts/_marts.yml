@@ -1,0 +1,95 @@
+version: 2
+
+# Gold layer: star schema for business use.
+#   Facts:      fct_orders, fct_subscription_mrr_monthly
+#   Dimensions: dim_customers (SCD2), dim_products (SCD2), dim_date
+
+models:
+  - name: dim_customers
+    description: >
+      Customer dimension, SCD Type 2. One row per customer version. Filter on
+      is_current for the present view; join on customer_sk from a fact for the
+      view at the time of the event. Deleted customers keep their history and
+      have is_deleted_customer = true.
+    columns:
+      - name: customer_sk
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests: [not_null]
+
+  - name: dim_products
+    description: Product dimension, SCD Type 2. One row per product version.
+    columns:
+      - name: product_sk
+        data_tests: [unique, not_null]
+      - name: product_id
+        data_tests: [not_null]
+
+  - name: dim_date
+    description: Calendar, one row per day (range set by the date_spine_* vars).
+    columns:
+      - name: date_key
+        description: Date as an integer, yyyymmdd.
+        data_tests: [unique, not_null]
+
+  - name: fct_orders
+    description: >
+      Order fact, one row per order at its latest known state. Keys point to
+      the dimension versions valid when the order was placed.
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: customer_sk
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_sk
+      - name: product_sk
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_sk
+      - name: order_date_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: net_amount
+        description: quantity × unit_price × (1 − discount_pct), rounded to cents.
+      - name: recognized_revenue
+        description: net_amount, or 0 if the order was cancelled or returned.
+      - name: list_price_at_order
+        description: Product list price at the time of the order, from dim_products.
+
+  - name: fct_subscription_mrr_monthly
+    description: >
+      Monthly snapshot, one row per subscription per month, as the
+      subscription stood at month end. Cancelled subscriptions appear up to
+      the month they were cancelled. Only active and past_due subscriptions
+      count toward MRR.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [subscription_id, month_start]
+    columns:
+      - name: subscription_month_sk
+        data_tests: [unique, not_null]
+      - name: customer_sk
+        description: Customer version at month end (or the last one before a delete).
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_sk
+      - name: month_end_date_key
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key

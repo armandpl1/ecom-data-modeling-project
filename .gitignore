@@ -6,6 +6,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+deenv/
 
 # dbt / DuckDB
 target/
@@ -13,3 +14,4 @@ dbt_packages/
 logs/
 *.duckdb
 *.duckdb.wal
+.user.yml

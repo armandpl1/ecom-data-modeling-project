@@ -1,0 +1,8 @@
+# Local DuckDB warehouse. dbt reads this file when run from the project root.
+ecom:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: ecom.duckdb
+      threads: 4

@@ -1,0 +1,5 @@
+[flake8]
+# Match black's line length and formatting
+max-line-length = 88
+extend-ignore = E203, E701
+exclude = deenv, .venv, data, target, dbt_packages

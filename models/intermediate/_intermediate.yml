@@ -1,0 +1,55 @@
+version: 2
+
+# Silver layer: business logic, joins and SCD Type 2 history.
+# The *_history models share these columns, built by the
+# scd2_from_history macro:
+#   valid_from / valid_to  period the version was true (valid_to null = still true)
+#   is_current             last version of the record
+#   version_number         1, 2, 3 ... per record
+#   is_deleted             tombstone version recording a hard delete
+#   deleted_at             when the record was deleted (on every version)
+
+models:
+  - name: int_customers_history
+    description: >
+      SCD Type 2 customer history. A new version starts only when a tracked
+      attribute changes, so repeated rows with the same values are collapsed.
+    columns:
+      - name: customer_sk
+        description: Surrogate key of the version (hash of customer_id and valid_from).
+        data_tests: [unique, not_null]
+
+  - name: int_products_history
+    description: SCD Type 2 product history, including price changes and discontinuations.
+    columns:
+      - name: product_sk
+        data_tests: [unique, not_null]
+
+  - name: int_subscriptions_history
+    description: SCD Type 2 subscription history (plan changes, status changes, repricing).
+    columns:
+      - name: subscription_version_sk
+        data_tests: [unique, not_null]
+
+  - name: int_orders
+    description: >
+      One row per order at its latest state, with the first time it reached
+      each status. Amounts reflect the latest version, so later corrections
+      and goodwill discounts are included.
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: is_open
+        description: Still placed or shipped at the extract cutoff.
+
+  - name: int_orders_enriched
+    description: >
+      int_orders joined to the customer and product versions valid at
+      order_placed_at (point-in-time join on the SCD2 history).
+    columns:
+      - name: order_id
+        data_tests: [unique, not_null]
+      - name: customer_sk
+        data_tests: [not_null]
+      - name: product_sk
+        data_tests: [not_null]
