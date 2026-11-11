@@ -26,9 +26,9 @@ state_at_month_end as (
     from months
     inner join subscription_versions
         -- version that was valid at the end of the month
-        on  subscription_versions.valid_from < months.month_end + interval 1 day
-        and (subscription_versions.valid_to >= months.month_end + interval 1 day
-             or subscription_versions.valid_to is null)
+        on  subscription_versions.valid_from_timestamp < months.month_end + interval 1 day
+        and (subscription_versions.valid_to_timestamp >= months.month_end + interval 1 day
+             or subscription_versions.valid_to_timestamp is null)
 
 ),
 
@@ -69,11 +69,11 @@ left join customers
     -- Customer version at month end. If the customer was deleted during the
     -- month, use their last version before the delete. (least() skips nulls.)
     on  state_at_month_end.customer_id = customers.customer_id
-    and customers.valid_from
+    and customers.valid_from_timestamp
         < least(state_at_month_end.month_end + interval 1 day, customers.deleted_at)
-    and (customers.valid_to
+    and (customers.valid_to_timestamp
          >= least(state_at_month_end.month_end + interval 1 day, customers.deleted_at)
-         or customers.valid_to is null)
+         or customers.valid_to_timestamp is null)
 where not state_at_month_end.is_deleted
   -- Keep cancelled subscriptions only up to the month they were cancelled
   and not (

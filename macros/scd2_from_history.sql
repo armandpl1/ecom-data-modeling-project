@@ -9,7 +9,7 @@
     2. Drop rows whose hash equals the previous row's, so a version only
        starts when a tracked value actually changes.
     3. Each remaining row is a version, valid from its updated_at until
-       the next version's updated_at. The last version has valid_to = null.
+       the next version's updated_at. The last version has valid_to_timestamp = null.
 
   A delete (_op = 'D') becomes a final tombstone version with
   is_deleted = true, which closes the version before it.
@@ -56,10 +56,10 @@ versioned as (
     select
         md5({{ unique_key }} || '|' || cast(updated_at as varchar)) as {{ surrogate_key }},
         *,
-        updated_at as valid_from,
+        updated_at as valid_from_timestamp,
         lead(updated_at) over (
             partition by {{ unique_key }} order by updated_at
-        ) as valid_to,
+        ) as valid_to_timestamp,
         row_number() over (
             partition by {{ unique_key }} order by updated_at
         ) as version_number,
@@ -72,7 +72,7 @@ versioned as (
 
 select
     *,
-    valid_to is null as is_current
+    valid_to_timestamp is null as is_current
 from versioned
 
 {% endmacro %}

@@ -1,0 +1,71 @@
+version: 2
+
+# dbt unit tests: fixed inputs -> expected outputs, run before the model is
+# built (`dbt build`) or on their own (`dbt test --select test_type:unit`).
+
+unit_tests:
+
+  - name: fact_subscriptions_classifies_every_movement_type
+    description: >
+      One subscription goes through trial, conversion, upgrade, a past_due
+      spell, pause, resume, downgrade and cancellation. A second one is a trial
+      that never converts. Each change must get the right movement type and
+      MRR change; the past_due spell (still paying, same MRR) must not create
+      an event.
+    model: fact_subscriptions
+    given:
+      - input: ref('int_subscriptions_history')
+        rows:
+          - {subscription_version_sk: s1v1, subscription_id: S1, customer_id: C1, plan_name: basic,   mrr: 9.99,  subscription_status: trialing,  is_deleted: false, valid_from_timestamp: "2025-01-01 00:00:00"}
+          - {subscription_version_sk: s1v2, subscription_id: S1, customer_id: C1, plan_name: basic,   mrr: 9.99,  subscription_status: active,    is_deleted: false, valid_from_timestamp: "2025-01-15 00:00:00"}
+          - {subscription_version_sk: s1v3, subscription_id: S1, customer_id: C1, plan_name: premium, mrr: 49.99, subscription_status: active,    is_deleted: false, valid_from_timestamp: "2025-03-01 00:00:00"}
+          - {subscription_version_sk: s1v4, subscription_id: S1, customer_id: C1, plan_name: premium, mrr: 49.99, subscription_status: past_due,  is_deleted: false, valid_from_timestamp: "2025-04-01 00:00:00"}
+          - {subscription_version_sk: s1v5, subscription_id: S1, customer_id: C1, plan_name: premium, mrr: 49.99, subscription_status: paused,    is_deleted: false, valid_from_timestamp: "2025-05-01 00:00:00"}
+          - {subscription_version_sk: s1v6, subscription_id: S1, customer_id: C1, plan_name: premium, mrr: 49.99, subscription_status: active,    is_deleted: false, valid_from_timestamp: "2025-06-01 00:00:00"}
+          - {subscription_version_sk: s1v7, subscription_id: S1, customer_id: C1, plan_name: plus,    mrr: 19.99, subscription_status: active,    is_deleted: false, valid_from_timestamp: "2025-07-01 00:00:00"}
+          - {subscription_version_sk: s1v8, subscription_id: S1, customer_id: C1, plan_name: plus,    mrr: 19.99, subscription_status: cancelled, is_deleted: false, valid_from_timestamp: "2025-08-01 00:00:00"}
+          - {subscription_version_sk: s2v1, subscription_id: S2, customer_id: C2, plan_name: basic,   mrr: 9.99,  subscription_status: trialing,  is_deleted: false, valid_from_timestamp: "2025-02-01 00:00:00"}
+          - {subscription_version_sk: s2v2, subscription_id: S2, customer_id: C2, plan_name: basic,   mrr: 9.99,  subscription_status: cancelled, is_deleted: false, valid_from_timestamp: "2025-02-15 00:00:00"}
+      - input: ref('int_customers_history')
+        rows:
+          - {customer_sk: c1, customer_id: C1, is_deleted: false, valid_from_timestamp: "2024-01-01 00:00:00", valid_to_timestamp: null, deleted_at: null}
+          - {customer_sk: c2, customer_id: C2, is_deleted: false, valid_from_timestamp: "2024-01-01 00:00:00", valid_to_timestamp: null, deleted_at: null}
+    expect:
+      rows:
+        - {subscription_event_id: s1v2, movement_type: new,           mrr_change: 9.99,   is_churn_event: false, churn_type: null,  customer_sk: c1}
+        - {subscription_event_id: s1v3, movement_type: expansion,     mrr_change: 40.00,  is_churn_event: false, churn_type: null,  customer_sk: c1}
+        - {subscription_event_id: s1v5, movement_type: pause,         mrr_change: -49.99, is_churn_event: false, churn_type: null,  customer_sk: c1}
+        - {subscription_event_id: s1v6, movement_type: resume,        mrr_change: 49.99,  is_churn_event: false, churn_type: null,  customer_sk: c1}
+        - {subscription_event_id: s1v7, movement_type: contraction,   mrr_change: -30.00, is_churn_event: false, churn_type: null,  customer_sk: c1}
+        - {subscription_event_id: s1v8, movement_type: churn,         mrr_change: -19.99, is_churn_event: true,  churn_type: paid,  customer_sk: c1}
+        - {subscription_event_id: s2v2, movement_type: no_mrr_change, mrr_change: 0.00,   is_churn_event: true,  churn_type: trial, customer_sk: c2}
+
+  - name: int_orders_rolls_up_lifecycle_and_corrections
+    description: >
+      An order is placed with the wrong quantity, corrected, shipped,
+      delivered and returned. The roll-up must keep the corrected quantity,
+      take the latest status, and record when each status was first reached.
+    model: int_orders
+    given:
+      - input: ref('stg_orders')
+        rows:
+          - {order_id: O1, customer_id: C1, product_id: P1, quantity: 7, unit_price: 10.00, discount_pct: 0.10, order_total: 63.00, currency: USD, payment_method: card, order_status: placed,    order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-01 10:00:00", loaded_at: "2025-01-02 02:00:00", is_deleted: false}
+          - {order_id: O1, customer_id: C1, product_id: P1, quantity: 1, unit_price: 10.00, discount_pct: 0.10, order_total: 9.00,  currency: USD, payment_method: card, order_status: placed,    order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-01 15:00:00", loaded_at: "2025-01-02 02:00:00", is_deleted: false}
+          - {order_id: O1, customer_id: C1, product_id: P1, quantity: 1, unit_price: 10.00, discount_pct: 0.10, order_total: 9.00,  currency: USD, payment_method: card, order_status: shipped,   order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-03 09:00:00", loaded_at: "2025-01-04 02:00:00", is_deleted: false}
+          - {order_id: O1, customer_id: C1, product_id: P1, quantity: 1, unit_price: 10.00, discount_pct: 0.10, order_total: 9.00,  currency: USD, payment_method: card, order_status: delivered, order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-06 12:00:00", loaded_at: "2025-01-07 02:00:00", is_deleted: false}
+          - {order_id: O1, customer_id: C1, product_id: P1, quantity: 1, unit_price: 10.00, discount_pct: 0.10, order_total: 9.00,  currency: USD, payment_method: card, order_status: returned,  order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-20 08:00:00", loaded_at: "2025-01-21 02:00:00", is_deleted: false}
+    expect:
+      rows:
+        - order_id: O1
+          order_status: returned
+          quantity: 1
+          gross_amount: 10.00
+          discount_amount: 1.00
+          net_amount: 9.00
+          shipped_at: "2025-01-03 09:00:00"
+          delivered_at: "2025-01-06 12:00:00"
+          cancelled_at: null
+          returned_at: "2025-01-20 08:00:00"
+          change_count: 5
+          is_open: false
+          is_returned: true

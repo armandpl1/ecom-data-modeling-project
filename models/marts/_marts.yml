@@ -1,95 +1,534 @@
 version: 2
 
-# Gold layer: star schema for business use.
-#   Facts:      fct_orders, fct_subscription_mrr_monthly
-#   Dimensions: dim_customers (SCD2), dim_products (SCD2), dim_date
+# Gold layer: Kimball star schema.
+#   Dimensions: dim_customer (SCD2), dim_product (SCD2), dim_date
+#   Facts:      fact_orders                    transaction, one row per order line
+#               fact_subscriptions             transaction, one row per MRR movement / churn event
+#               fact_subscription_mrr_monthly  periodic snapshot, subscription x month
 
 models:
-  - name: dim_customers
+
+  # ---------------------------------------------------------------- dimensions
+
+  - name: dim_customer
     description: >
       Customer dimension, SCD Type 2. One row per customer version. Filter on
       is_current for the present view; join on customer_sk from a fact for the
       view at the time of the event. Deleted customers keep their history and
       have is_deleted_customer = true.
+    data_tests:
+      - scd2_valid_ranges:
+          arguments:
+            entity_key: customer_id
+            current_flag: is_current
+            deleted_at: deleted_at
     columns:
       - name: customer_sk
+        description: '{{ doc("scd2_sk") }}'
         data_tests: [unique, not_null]
       - name: customer_id
+        description: 'Natural key of the customer, the same on every version.'
         data_tests: [not_null]
+      - name: subscription_tier
+        description: Plan of the customer's live subscription during this version (none, basic, plus, premium).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [none, basic, plus, premium]
+      - name: valid_from_timestamp
+        description: '{{ doc("valid_from_timestamp") }}'
+        data_tests: [not_null]
+      - name: valid_to_timestamp
+        description: '{{ doc("valid_to_timestamp") }}'
+      - name: is_current
+        description: '{{ doc("is_current") }}'
+        data_tests: [not_null]
+      - name: version_number
+        description: '{{ doc("version_number") }}'
+      - name: deleted_at
+        description: '{{ doc("deleted_at") }}'
+      - name: first_name
+        description: 'First name, trimmed.'
+      - name: last_name
+        description: 'Last name, trimmed.'
+      - name: full_name
+        description: 'first_name and last_name.'
+      - name: email
+        description: 'Email address, lowercased and trimmed.'
+      - name: phone_number
+        description: '10-digit US phone number without country code. Null if missing in the source.'
+      - name: phone_extension
+        description: 'Phone extension, if any.'
+      - name: street_address
+        description: 'Street address.'
+      - name: city
+        description: 'City.'
+      - name: state
+        description: 'Two-letter US state code.'
+      - name: postal_code
+        description: 'ZIP code, kept as text to preserve leading zeros.'
+      - name: country
+        description: 'Country code (always US).'
+      - name: customer_segment
+        description: 'consumer, small_business or enterprise.'
+      - name: marketing_opt_in
+        description: 'Whether the customer accepts marketing email.'
+      - name: customer_created_at
+        description: 'When the customer was first created in the source.'
+      - name: is_deleted_customer
+        description: 'True on every version of a customer that was hard-deleted.'
 
-  - name: dim_products
-    description: Product dimension, SCD Type 2. One row per product version.
+  - name: dim_product
+    description: >
+      Product dimension, SCD Type 2. One row per product version; price
+      changes and discontinuation start a new version. Launch and
+      discontinuation dates are product-level and repeated on every version.
+    data_tests:
+      - scd2_valid_ranges:
+          arguments:
+            entity_key: product_id
+            current_flag: is_current
+            deleted_at: deleted_at
     columns:
       - name: product_sk
+        description: '{{ doc("scd2_sk") }}'
         data_tests: [unique, not_null]
       - name: product_id
+        description: 'Natural key of the product, the same on every version.'
         data_tests: [not_null]
-
-  - name: dim_date
-    description: Calendar, one row per day (range set by the date_spine_* vars).
-    columns:
-      - name: date_key
-        description: Date as an integer, yyyymmdd.
-        data_tests: [unique, not_null]
-
-  - name: fct_orders
-    description: >
-      Order fact, one row per order at its latest known state. Keys point to
-      the dimension versions valid when the order was placed.
-    columns:
-      - name: order_id
-        data_tests: [unique, not_null]
-      - name: customer_sk
+      - name: product_line
+        description: Name without the color, e.g. "Deluxe Tent".
+      - name: product_style
+        description: First word of the product line, e.g. "Deluxe".
+      - name: product_type
+        description: Rest of the product line, e.g. "Tent".
+      - name: color
+        description: Color variant from the product name.
+      - name: category
+        description: 'Product category.'
         data_tests:
-          - not_null
-          - relationships:
+          - accepted_values:
               arguments:
-                to: ref('dim_customers')
-                field: customer_sk
-      - name: product_sk
-        data_tests:
-          - not_null
-          - relationships:
-              arguments:
-                to: ref('dim_products')
-                field: product_sk
-      - name: order_date_key
+                values: [Apparel, Books, Electronics, Home, Outdoors]
+      - name: unit_price
+        description: List price of this version.
+        data_tests: [not_null, not_negative]
+      - name: price_band
+        description: Price range of this version's unit_price. Prefixed with a number so it sorts correctly.
+      - name: launch_date
+        description: Date the product was first created in the source.
+        data_tests: [not_null]
+      - name: launch_date_key
+        description: '{{ doc("date_key") }} Launch date.'
         data_tests:
           - relationships:
               arguments:
                 to: ref('dim_date')
                 field: date_key
-      - name: net_amount
-        description: quantity × unit_price × (1 − discount_pct), rounded to cents.
-      - name: recognized_revenue
-        description: net_amount, or 0 if the order was cancelled or returned.
-      - name: list_price_at_order
-        description: Product list price at the time of the order, from dim_products.
+      - name: discontinued_at
+        description: First time the product was marked inactive. Null if still active.
+      - name: valid_from_timestamp
+        description: '{{ doc("valid_from_timestamp") }}'
+        data_tests: [not_null]
+      - name: valid_to_timestamp
+        description: '{{ doc("valid_to_timestamp") }}'
+      - name: is_current
+        description: '{{ doc("is_current") }}'
+      - name: sku
+        description: 'Stock keeping unit. Prefix is the category code.'
+      - name: product_name
+        description: 'Full product name, e.g. "Deluxe Tent - MediumOrchid".'
+      - name: category_code
+        description: 'SKU prefix for the category (APP, BOO, ELE, HOM, OUT).'
+      - name: currency
+        description: 'Price currency (always USD).'
+      - name: is_active
+        description: 'False once the product is discontinued.'
+      - name: launched_at
+        description: 'When the product was first created in the source.'
+      - name: discontinued_date_key
+        description: 'Date key of discontinued_at. Null if still active.'
+      - name: deleted_at
+        description: '{{ doc("deleted_at") }}'
+      - name: is_deleted_product
+        description: 'True on every version of a product that was hard-deleted.'
+      - name: version_number
+        description: '{{ doc("version_number") }}'
 
-  - name: fct_subscription_mrr_monthly
+  - name: dim_date
     description: >
-      Monthly snapshot, one row per subscription per month, as the
+      Calendar, one row per day (range set by the date_spine_* vars). Includes
+      fiscal attributes (fiscal_year_start_month var), US federal holidays,
+      retail events, and rolling-window flags relative to as_of_date.
+    columns:
+      - name: date_key
+        description: '{{ doc("date_key") }}'
+        data_tests: [unique, not_null]
+      - name: date_day
+        description: 'The calendar date.'
+        data_tests: [unique, not_null]
+      - name: fiscal_year
+        description: Fiscal year, named by the calendar year it ends in (FY2026 = Feb 2025 – Jan 2026 by default).
+      - name: holiday_name
+        description: US federal holiday falling on this date (actual date, not observed).
+      - name: is_observed_holiday
+        description: Day off for a federal holiday. A Saturday holiday is observed on Friday, a Sunday one on Monday.
+      - name: is_business_day
+        description: Weekday that is not an observed federal holiday.
+      - name: retail_event_name
+        description: Black Friday or Cyber Monday.
+      - name: as_of_date
+        description: Reference date for the rolling-window flags (var as_of_date, default the last order date).
+      - name: is_last_30_days
+        description: Within the 30 days ending on as_of_date (inclusive). Same pattern for 7, 90 and 365 days.
+      - name: year
+        description: 'Calendar year.'
+      - name: quarter
+        description: 'Calendar quarter, 1–4.'
+      - name: quarter_name
+        description: 'Calendar quarter label, e.g. Q3.'
+      - name: month
+        description: 'Calendar month, 1–12.'
+      - name: month_name
+        description: 'Month name, e.g. October.'
+      - name: year_month
+        description: 'Year and month as text, e.g. 2026-10. Sorts correctly.'
+      - name: day_of_month
+        description: 'Day of the month, 1–31.'
+      - name: day_of_year
+        description: 'Day of the year, 1–366.'
+      - name: iso_day_of_week
+        description: 'ISO day of week: 1 = Monday … 7 = Sunday.'
+      - name: day_name
+        description: 'Day name, e.g. Monday.'
+      - name: iso_week
+        description: 'ISO week number.'
+      - name: week_start
+        description: 'Monday of the week.'
+      - name: month_start
+        description: 'First day of the month.'
+      - name: month_end
+        description: 'Last day of the month.'
+      - name: quarter_start
+        description: 'First day of the calendar quarter.'
+      - name: is_month_end
+        description: 'Last day of the month.'
+      - name: is_quarter_end
+        description: 'Last day of the calendar quarter.'
+      - name: fiscal_quarter
+        description: 'Fiscal quarter, 1–4.'
+      - name: fiscal_month
+        description: 'Fiscal month, 1–12. Month 1 is fiscal_year_start_month.'
+      - name: fiscal_year_name
+        description: 'Fiscal year label, e.g. FY2026.'
+      - name: fiscal_quarter_name
+        description: 'Fiscal quarter label, e.g. FY2026-Q1.'
+      - name: is_weekend
+        description: 'Saturday or Sunday.'
+      - name: is_holiday
+        description: 'A US federal holiday falls on this date.'
+      - name: observed_holiday_name
+        description: 'Federal holiday observed (day off) on this date. Can differ from holiday_name when the holiday falls on a weekend.'
+      - name: is_retail_event
+        description: 'Black Friday or Cyber Monday.'
+      - name: days_from_as_of
+        description: 'Days between as_of_date and this date. Negative in the past.'
+      - name: months_from_as_of
+        description: 'Calendar months between as_of_date and this date. 0 = same month, -1 = previous month.'
+      - name: is_future
+        description: 'After as_of_date.'
+      - name: is_last_7_days
+        description: 'Within the 7 days ending on as_of_date (inclusive).'
+      - name: is_last_90_days
+        description: 'Within the 90 days ending on as_of_date (inclusive).'
+      - name: is_last_365_days
+        description: 'Within the 365 days ending on as_of_date (inclusive).'
+      - name: is_current_month
+        description: 'Same calendar month as as_of_date.'
+      - name: is_previous_month
+        description: 'The calendar month before as_of_date.'
+      - name: is_month_to_date
+        description: 'From the start of as_of_date''s month up to as_of_date.'
+      - name: is_year_to_date
+        description: 'From January 1 of as_of_date''s year up to as_of_date.'
+      - name: is_prior_year_to_date
+        description: 'The same year-to-date window one year earlier.'
+      - name: is_fiscal_year_to_date
+        description: 'From the start of as_of_date''s fiscal year up to as_of_date.'
+
+  # --------------------------------------------------------------------- facts
+
+  - name: fact_orders
+    description: >
+      Order line fact. Grain: one row per order line. The source sells one
+      product per order, so order_line_number is always 1. Each row reflects
+      the order's latest known state; customer_sk and product_sk point to the
+      dimension versions valid when the order was placed.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [order_id, order_line_number]
+      - expression_is_true:
+          arguments:
+            expression: "abs(gross_revenue - discount_amount - net_revenue) < 0.01"
+      - expression_is_true:
+          arguments:
+            expression: "abs(net_revenue - cancelled_revenue - returned_revenue - recognized_revenue) < 0.01"
+      - expression_is_true:
+          arguments:
+            expression: "shipped_at is null or shipped_at >= order_placed_at"
+      - expression_is_true:
+          arguments:
+            expression: "delivered_at is null or shipped_at is null or delivered_at >= shipped_at"
+      # Known late-data gap: a "shipped" row can miss the extract cutoff while
+      # the later "delivered" row arrives. Report it, but don't fail the build.
+      - expression_is_true:
+          name: delivered_orders_have_ship_event
+          arguments:
+            expression: "not is_missing_ship_event"
+          config:
+            severity: warn
+    columns:
+      - name: order_line_id
+        description: 'Unique ID of the order line: <order_id>-<order_line_number>.'
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Degenerate dimension (order number, no dimension table of its own).
+        data_tests: [not_null]
+      - name: customer_sk
+        description: 'Customer version valid when the order was placed. Join to dim_customer.'
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_sk
+      - name: product_sk
+        description: 'Product version valid when the order was placed. Join to dim_product.'
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_sk
+      - name: order_date_key
+        description: '{{ doc("date_key") }} Order date.'
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: ship_date_key
+        description: Role-playing date key. Null if not shipped.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: delivery_date_key
+        description: Role-playing date key. Null if not delivered.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: quantity
+        description: 'Units ordered. Additive.'
+        data_tests: [not_null, not_negative]
+      - name: gross_revenue
+        description: quantity × unit_price, before discount. Additive.
+        data_tests: [not_null, not_negative]
+      - name: discount_amount
+        description: gross_revenue − net_revenue. Additive.
+        data_tests: [not_null, not_negative]
+      - name: net_revenue
+        description: quantity × unit_price × (1 − discount_pct), rounded to cents. Additive. The order total; must never be negative.
+        data_tests: [not_null, not_negative]
+      - name: cancelled_revenue
+        description: net_revenue if the order was cancelled, else 0. Additive.
+        data_tests: [not_negative]
+      - name: returned_revenue
+        description: net_revenue if the order was returned, else 0. Additive.
+        data_tests: [not_negative]
+      - name: recognized_revenue
+        description: net_revenue − cancelled_revenue − returned_revenue. Additive.
+        data_tests: [not_null, not_negative]
+      - name: is_missing_ship_event
+        description: >
+          Delivered (or returned) but no "shipped" change has arrived yet. The
+          ship row was loaded late and missed the extract cutoff; it fills in
+          on a later load.
+      - name: unit_price
+        description: Non-additive. Average it, don't sum it.
+        data_tests: [not_negative]
+      - name: discount_pct
+        description: Non-additive.
+      - name: order_line_number
+        description: 'Line number within the order (always 1 in this source).'
+      - name: customer_id
+        description: 'Natural key of the customer.'
+      - name: product_id
+        description: 'Natural key of the product.'
+      - name: order_status
+        description: 'Latest status: placed, shipped, delivered, cancelled or returned.'
+      - name: payment_method
+        description: 'card, paypal, apple_pay or gift_card.'
+      - name: currency
+        description: 'Order currency (always USD).'
+      - name: days_to_ship
+        description: 'Days from order to shipment. Non-additive: average it.'
+      - name: days_to_deliver
+        description: 'Days from order to delivery. Non-additive: average it.'
+      - name: order_placed_at
+        description: 'When the order was placed.'
+      - name: shipped_at
+        description: 'First time the order reached shipped.'
+      - name: delivered_at
+        description: 'First time the order reached delivered.'
+      - name: cancelled_at
+        description: 'When the order was cancelled.'
+      - name: returned_at
+        description: 'When the order was returned.'
+      - name: last_updated_at
+        description: 'Time of the latest change to the order.'
+      - name: is_open
+        description: 'Still placed or shipped at the extract cutoff.'
+      - name: is_cancelled
+        description: 'Latest status is cancelled.'
+      - name: is_returned
+        description: 'Latest status is returned.'
+
+  - name: fact_subscriptions
+    description: >
+      Subscription event fact. Grain: one row per subscription change that
+      moves MRR or cancels the subscription. Summing mrr_change over all
+      events up to a date gives MRR on that date.
+    data_tests:
+      - expression_is_true:
+          arguments:
+            expression: "abs(mrr_after - mrr_before - mrr_change) < 0.01"
+      - expression_is_true:
+          arguments:
+            expression: "mrr_change <> 0 or is_churn_event"
+    columns:
+      - name: subscription_event_id
+        description: 'Unique ID of the event (the subscription version that caused it).'
+        data_tests: [unique, not_null]
+      - name: subscription_id
+        description: Degenerate dimension.
+        data_tests: [not_null]
+      - name: customer_sk
+        description: Customer version at the time of the event.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_sk
+      - name: event_date_key
+        description: '{{ doc("date_key") }} Date of the event.'
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: movement_type
+        description: >
+          new, expansion, contraction, pause, resume, reactivation, churn, or
+          no_mrr_change (cancellation of a trial or paused subscription).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [new, expansion, contraction, pause, resume, reactivation, churn, no_mrr_change]
+      - name: mrr_change
+        description: mrr_after − mrr_before. Additive.
+      - name: mrr_gained
+        description: Positive part of mrr_change. Additive.
+        data_tests: [not_negative]
+      - name: mrr_lost
+        description: Negative part of mrr_change, as a positive number. Additive.
+        data_tests: [not_negative]
+      - name: churned_subscriptions
+        description: 1 if the subscription was cancelled in this event, else 0. Additive.
+      - name: mrr_before
+        description: Paying MRR before the event. Semi-additive, don't sum across events.
+        data_tests: [not_null, not_negative]
+      - name: mrr_after
+        description: '{{ doc("paying_mrr") }} Value after the event. Semi-additive.'
+        data_tests: [not_null, not_negative]
+      - name: churn_type
+        description: For churn events, what the subscription was before cancelling (paid, trial, paused).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [paid, trial, paused]
+      - name: customer_id
+        description: 'Natural key of the customer.'
+      - name: event_at
+        description: 'When the change happened in the source.'
+      - name: status_before
+        description: 'Status before the event. Null for the first version.'
+      - name: status_after
+        description: 'Status after the event.'
+      - name: plan_before
+        description: 'Plan before the event.'
+      - name: plan_after
+        description: 'Plan after the event.'
+      - name: billing_period
+        description: 'monthly or annual.'
+      - name: is_churn_event
+        description: 'The subscription was cancelled (or deleted) in this event.'
+
+  - name: fact_subscription_mrr_monthly
+    description: >
+      Periodic snapshot. Grain: one row per subscription per month, as the
       subscription stood at month end. Cancelled subscriptions appear up to
       the month they were cancelled. Only active and past_due subscriptions
-      count toward MRR.
+      count toward MRR. mrr is semi-additive: sum across subscriptions, not
+      across months.
     data_tests:
       - unique_combination_of_columns:
           arguments:
             combination_of_columns: [subscription_id, month_start]
     columns:
       - name: subscription_month_sk
+        description: 'Unique key: hash of subscription_id and month_start.'
         data_tests: [unique, not_null]
+      - name: mrr
+        description: '{{ doc("paying_mrr") }} Semi-additive: sum across subscriptions, not across months.'
+        data_tests: [not_null, not_negative]
       - name: customer_sk
         description: Customer version at month end (or the last one before a delete).
         data_tests:
           - not_null
           - relationships:
               arguments:
-                to: ref('dim_customers')
+                to: ref('dim_customer')
                 field: customer_sk
       - name: month_end_date_key
+        description: '{{ doc("date_key") }} Last day of the month.'
         data_tests:
           - relationships:
               arguments:
                 to: ref('dim_date')
                 field: date_key
+      - name: month_start
+        description: 'First day of the month this row describes.'
+      - name: subscription_id
+        description: 'Degenerate dimension.'
+      - name: customer_id
+        description: 'Natural key of the customer.'
+      - name: plan_name
+        description: 'Plan at month end: basic, plus or premium.'
+      - name: billing_period
+        description: 'monthly or annual.'
+      - name: subscription_status
+        description: 'Status at month end: trialing, active, past_due, paused or cancelled.'
+      - name: started_on
+        description: 'Date the subscription started.'
+      - name: cancelled_at
+        description: 'When the subscription was cancelled, if it was.'
+      - name: is_paying
+        description: 'Status is active or past_due, so mrr counts.'

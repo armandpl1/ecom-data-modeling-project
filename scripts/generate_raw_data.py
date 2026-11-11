@@ -53,13 +53,27 @@ TS_FMT = "%Y-%m-%d %H:%M:%S"
 # Product catalog building blocks. Names come out like "Eco Lamp - Navy".
 CATEGORIES = {
     # category: (product nouns, min price, max price)
-    "Electronics": (["Headphones", "Speaker", "Charger", "Keyboard", "Mouse", "Monitor"], 15, 400),
+    "Electronics": (
+        ["Headphones", "Speaker", "Charger", "Keyboard", "Mouse", "Monitor"],
+        15,
+        400,
+    ),
     "Home": (["Lamp", "Blanket", "Mug", "Vase", "Cushion", "Candle"], 8, 150),
     "Outdoors": (["Tent", "Backpack", "Water Bottle", "Hammock", "Headlamp"], 10, 300),
     "Apparel": (["Hoodie", "T-Shirt", "Jacket", "Cap", "Socks"], 5, 180),
     "Books": (["Notebook", "Planner", "Cookbook", "Novel"], 5, 60),
 }
-ADJECTIVES = ["Classic", "Pro", "Ultra", "Eco", "Smart", "Compact", "Deluxe", "Everyday", "Travel"]
+ADJECTIVES = [
+    "Classic",
+    "Pro",
+    "Ultra",
+    "Eco",
+    "Smart",
+    "Compact",
+    "Deluxe",
+    "Everyday",
+    "Travel",
+]
 
 # Monthly subscription prices. Prices rise once, 60% of the way through the
 # date range, and every live subscription is repriced on that day.
@@ -67,27 +81,74 @@ PLAN_PRICES_OLD = {"basic": 9.99, "plus": 19.99, "premium": 49.99}
 PLAN_PRICES_NEW = {"basic": 11.99, "plus": 24.99, "premium": 59.99}
 PLAN_ORDER = ["basic", "plus", "premium"]  # cheapest to most expensive
 
-CUSTOMER_SEGMENTS = ["consumer", "small_business", "enterprise"]  # lowest to highest tier
+CUSTOMER_SEGMENTS = [
+    "consumer",
+    "small_business",
+    "enterprise",
+]  # lowest to highest tier
 
 # Column order for each output file.
 COLUMNS = {
     "customers": [
-        "customer_id", "first_name", "last_name", "email", "phone", "street_address",
-        "city", "state", "postal_code", "country", "customer_segment", "marketing_opt_in",
-        "created_at", "updated_at", "_op", "_loaded_at",
+        "customer_id",
+        "first_name",
+        "last_name",
+        "email",
+        "phone",
+        "street_address",
+        "city",
+        "state",
+        "postal_code",
+        "country",
+        "customer_segment",
+        "marketing_opt_in",
+        "created_at",
+        "updated_at",
+        "_op",
+        "_loaded_at",
     ],
     "products": [
-        "product_id", "sku", "product_name", "category", "unit_price", "currency",
-        "is_active", "created_at", "updated_at", "_op", "_loaded_at",
+        "product_id",
+        "sku",
+        "product_name",
+        "category",
+        "unit_price",
+        "currency",
+        "is_active",
+        "created_at",
+        "updated_at",
+        "_op",
+        "_loaded_at",
     ],
     "orders": [
-        "order_id", "customer_id", "product_id", "quantity", "unit_price", "discount_pct",
-        "order_total", "currency", "payment_method", "status", "order_placed_at",
-        "updated_at", "_op", "_loaded_at",
+        "order_id",
+        "customer_id",
+        "product_id",
+        "quantity",
+        "unit_price",
+        "discount_pct",
+        "order_total",
+        "currency",
+        "payment_method",
+        "status",
+        "order_placed_at",
+        "updated_at",
+        "_op",
+        "_loaded_at",
     ],
     "subscriptions": [
-        "subscription_id", "customer_id", "plan_name", "billing_period", "mrr", "status",
-        "started_at", "trial_ends_at", "cancelled_at", "created_at", "updated_at", "_op",
+        "subscription_id",
+        "customer_id",
+        "plan_name",
+        "billing_period",
+        "mrr",
+        "status",
+        "started_at",
+        "trial_ends_at",
+        "cancelled_at",
+        "created_at",
+        "updated_at",
+        "_op",
         "_loaded_at",
     ],
 }
@@ -110,7 +171,9 @@ class Generator:
     same seed and arguments always produce the same files.
     """
 
-    def __init__(self, seed: int, start: date, end: date, late_rate: float, dup_rate: float):
+    def __init__(
+        self, seed: int, start: date, end: date, late_rate: float, dup_rate: float
+    ):
         """
         Args:
             seed: random seed for reproducible output.
@@ -151,8 +214,14 @@ class Generator:
             loaded += timedelta(days=self.rng.randint(1, 14))
         return loaded
 
-    def emit(self, rows: list, state: dict, ts: datetime, op: str = "U",
-             loaded: datetime | None = None) -> datetime | None:
+    def emit(
+        self,
+        rows: list,
+        state: dict,
+        ts: datetime,
+        op: str = "U",
+        loaded: datetime | None = None,
+    ) -> datetime | None:
         """Append one version of a record. Skips changes that are in the future
         or haven't been loaded yet as of the extract time."""
         if ts > self.end:
@@ -163,7 +232,9 @@ class Generator:
         rows.append({**state, "updated_at": ts, "_op": op, "_loaded_at": loaded})
         return loaded
 
-    def emit_corrected(self, rows: list, bad: dict, good: dict, ts: datetime, op: str = "I") -> datetime:
+    def emit_corrected(
+        self, rows: list, bad: dict, good: dict, ts: datetime, op: str = "I"
+    ) -> datetime:
         """Write a bad version, then its correction. Returns the correction time.
 
         70% of fixes get a new updated_at a few hours later. The other 30% reuse
@@ -183,7 +254,7 @@ class Generator:
         if len(s) < 3:
             return s + s[-1]
         i = self.rng.randrange(len(s) - 1)
-        return s[:i] + s[i + 1] + s[i] + s[i + 2:]
+        return s[:i] + s[i + 1] + s[i] + s[i + 2 :]
 
     @staticmethod
     def price_point(x: float) -> float:
@@ -214,20 +285,31 @@ class Generator:
             state = {
                 "product_id": f"P{i:04d}",
                 "sku": f"{category[:3].upper()}-{rng.randint(10000, 99999)}",
-                "product_name": f"{rng.choice(ADJECTIVES)} {rng.choice(nouns)} - {self.fake.color_name()}",
+                "product_name": (
+                    f"{rng.choice(ADJECTIVES)} {rng.choice(nouns)}"
+                    f" - {self.fake.color_name()}"
+                ),
                 "category": category,
                 "unit_price": price,
                 "currency": "USD",
                 "is_active": True,
                 "created_at": created,
             }
-            product = {"id": state["product_id"], "created": created, "inactive_at": None,
-                       "prices": [(created, price)]}
+            product = {
+                "id": state["product_id"],
+                "created": created,
+                "inactive_at": None,
+                "prices": [(created, price)],
+            }
 
             r = rng.random()
             if r < 0.10:  # price typo: shifted decimal point
-                bad_price = round(price * 10, 2) if rng.random() < 0.5 else round(price / 10, 2)
-                fixed_at = self.emit_corrected(rows, {**state, "unit_price": bad_price}, state, created)
+                bad_price = (
+                    round(price * 10, 2) if rng.random() < 0.5 else round(price / 10, 2)
+                )
+                fixed_at = self.emit_corrected(
+                    rows, {**state, "unit_price": bad_price}, state, created
+                )
                 # Orders placed before the fix really were charged the bad price.
                 product["prices"] = [(created, bad_price), (fixed_at, price)]
             elif r < 0.18:  # name typo
@@ -237,9 +319,14 @@ class Generator:
                 self.emit(rows, state, created, "I")
 
             # Price changes over time.
-            changes = sorted(self.between(created, self.end) for _ in range(rng.choice([0, 0, 1, 1, 2, 3])))
+            changes = sorted(
+                self.between(created, self.end)
+                for _ in range(rng.choice([0, 0, 1, 1, 2, 3]))
+            )
             for ts in changes:
-                state["unit_price"] = self.price_point(state["unit_price"] * rng.uniform(0.85, 1.25))
+                state["unit_price"] = self.price_point(
+                    state["unit_price"] * rng.uniform(0.85, 1.25)
+                )
                 self.emit(rows, state, ts)
                 product["prices"].append((ts, state["unit_price"]))
 
@@ -277,7 +364,9 @@ class Generator:
 
     def us_state(self) -> str:
         """A 50-states-plus-DC abbreviation (no territories like PR or FM)."""
-        return self.fake.state_abbr(include_territories=False, include_freely_associated_states=False)
+        return self.fake.state_abbr(
+            include_territories=False, include_freely_associated_states=False
+        )
 
     def new_email(self, first: str, last: str) -> str:
         """An email built from the customer's name, e.g. jane.doe42@gmail.com."""
@@ -334,22 +423,33 @@ class Generator:
             # Updates over the customer's lifetime: each (kind, chance) pair
             # rolls independently, so a customer can move twice, etc.
             events = []
-            for kind, p in [("move", 0.25), ("move", 0.08), ("email", 0.10), ("phone", 0.10),
-                            ("opt_in", 0.20), ("segment", 0.08), ("last_name", 0.04)]:
+            for kind, p in [
+                ("move", 0.25),
+                ("move", 0.08),
+                ("email", 0.10),
+                ("phone", 0.10),
+                ("opt_in", 0.20),
+                ("segment", 0.08),
+                ("last_name", 0.04),
+            ]:
                 if rng.random() < p:
                     events.append((self.between(created, self.end), kind))
             for ts, kind in sorted(events):
                 if kind == "move":
                     state.update(self.new_address())
                 elif kind == "email":
-                    state["email"] = self.new_email(state["first_name"], state["last_name"])
+                    state["email"] = self.new_email(
+                        state["first_name"], state["last_name"]
+                    )
                 elif kind == "phone":
                     state["phone"] = fake.phone_number()
                 elif kind == "opt_in":
                     state["marketing_opt_in"] = not state["marketing_opt_in"]
                 elif kind == "segment":  # move up one tier
                     idx = CUSTOMER_SEGMENTS.index(state["customer_segment"])
-                    state["customer_segment"] = CUSTOMER_SEGMENTS[min(idx + 1, len(CUSTOMER_SEGMENTS) - 1)]
+                    state["customer_segment"] = CUSTOMER_SEGMENTS[
+                        min(idx + 1, len(CUSTOMER_SEGMENTS) - 1)
+                    ]
                 elif kind == "last_name":
                     state["last_name"] = fake.last_name()
                 self.emit(rows, state, ts)
@@ -362,8 +462,14 @@ class Generator:
                 self.emit(rows, state, deleted_at, "D")
 
             # "weight" makes a few customers order far more often than most.
-            self.customers.append({"id": state["customer_id"], "created": created,
-                                   "deleted": deleted_at, "weight": rng.paretovariate(1.5)})
+            self.customers.append(
+                {
+                    "id": state["customer_id"],
+                    "created": created,
+                    "deleted": deleted_at,
+                    "weight": rng.paretovariate(1.5),
+                }
+            )
         return rows
 
     # ---------- orders ----------
@@ -384,8 +490,12 @@ class Generator:
         while len(placed) < n:
             c = rng.choices(self.customers, weights)[0]
             ts = self.between(c["created"], c["deleted"] or self.end)
-            available = [p for p in self.products
-                         if p["created"] <= ts and (p["inactive_at"] is None or p["inactive_at"] > ts)]
+            available = [
+                p
+                for p in self.products
+                if p["created"] <= ts
+                and (p["inactive_at"] is None or p["inactive_at"] > ts)
+            ]
             if available:
                 placed.append((ts, c, rng.choice(available)))
         placed.sort(key=lambda x: x[0])
@@ -403,7 +513,9 @@ class Generator:
                 "discount_pct": discount,
                 "order_total": round(qty * unit_price * (1 - discount), 2),
                 "currency": "USD",
-                "payment_method": rng.choices(["card", "paypal", "apple_pay", "gift_card"], [65, 20, 12, 3])[0],
+                "payment_method": rng.choices(
+                    ["card", "paypal", "apple_pay", "gift_card"], [65, 20, 12, 3]
+                )[0],
                 "status": "placed",
                 "order_placed_at": ts,
             }
@@ -411,8 +523,11 @@ class Generator:
             # Wrong quantity keyed in, then fixed.
             if rng.random() < 0.04:
                 bad_qty = qty + rng.randint(1, 9)
-                bad = {**state, "quantity": bad_qty,
-                       "order_total": round(bad_qty * unit_price * (1 - discount), 2)}
+                bad = {
+                    **state,
+                    "quantity": bad_qty,
+                    "order_total": round(bad_qty * unit_price * (1 - discount), 2),
+                }
                 t = self.emit_corrected(rows, bad, state, ts)
             else:
                 self.emit(rows, state, ts, "I")
@@ -433,7 +548,9 @@ class Generator:
             if rng.random() < 0.02:  # goodwill discount applied after delivery
                 t += timedelta(days=rng.uniform(1, 10))
                 state["discount_pct"] = min(discount + 0.15, 0.5)
-                state["order_total"] = round(qty * unit_price * (1 - state["discount_pct"]), 2)
+                state["order_total"] = round(
+                    qty * unit_price * (1 - state["discount_pct"]), 2
+                )
                 self.emit(rows, state, t)
             if rng.random() < 0.05:
                 t += timedelta(days=rng.uniform(3, 30))
@@ -490,7 +607,11 @@ class Generator:
 
             # Backdated start date, later corrected.
             if rng.random() < 0.05:
-                bad = {**state, "started_at": state["started_at"] - timedelta(days=rng.choice([1, 30, 31]))}
+                bad = {
+                    **state,
+                    "started_at": state["started_at"]
+                    - timedelta(days=rng.choice([1, 30, 31])),
+                }
                 self.emit_corrected(rows, bad, state, t)
             else:
                 self.emit(rows, state, t, "I")
@@ -514,11 +635,21 @@ class Generator:
             repriced = state["created_at"] >= self.reprice_at
             while True:
                 nxt = t + timedelta(days=30, hours=rng.uniform(-12, 12))
-                if not repriced and nxt >= self.reprice_at and state["status"] != "cancelled":
+                if (
+                    not repriced
+                    and nxt >= self.reprice_at
+                    and state["status"] != "cancelled"
+                ):
                     repriced = True
                     if self.reprice_at < limit:
-                        state["mrr"] = self.mrr(state["plan_name"], state["billing_period"], self.reprice_at)
-                        self.emit(rows, state, self.reprice_at + timedelta(minutes=rng.uniform(0, 90)))
+                        state["mrr"] = self.mrr(
+                            state["plan_name"], state["billing_period"], self.reprice_at
+                        )
+                        self.emit(
+                            rows,
+                            state,
+                            self.reprice_at + timedelta(minutes=rng.uniform(0, 90)),
+                        )
                 t = nxt
                 if t >= limit:
                     break
@@ -539,7 +670,9 @@ class Generator:
                     idx = min(idx + 1, 2) if rng.random() < 0.7 else max(idx - 1, 0)
                     if PLAN_ORDER[idx] != state["plan_name"]:
                         state["plan_name"] = PLAN_ORDER[idx]
-                        state["mrr"] = self.mrr(state["plan_name"], state["billing_period"], t)
+                        state["mrr"] = self.mrr(
+                            state["plan_name"], state["billing_period"], t
+                        )
                         self.emit(rows, state, t)
                 elif r < 0.085:  # failed payment
                     state["status"] = "past_due"
@@ -573,7 +706,9 @@ class Generator:
         for row in self.rng.sample(rows, int(len(rows) * self.dup_rate)):
             dup = dict(row)
             if self.rng.random() < 0.5:
-                dup["_loaded_at"] = row["_loaded_at"] + timedelta(days=self.rng.randint(1, 3))
+                dup["_loaded_at"] = row["_loaded_at"] + timedelta(
+                    days=self.rng.randint(1, 3)
+                )
                 if dup["_loaded_at"] > self.as_of:
                     continue
             dups.append(dup)
@@ -586,7 +721,10 @@ class Generator:
 
 
 def fmt(value) -> str:
-    """Format a value for CSV: empty for None, true/false, ISO dates, 2-decimal floats."""
+    """Format a value for CSV.
+
+    None becomes empty, booleans true/false, dates ISO, floats 2 decimals.
+    """
     if value is None:
         return ""
     if isinstance(value, bool):
@@ -613,17 +751,34 @@ def write_csv(path: Path, columns: list[str], rows: list[dict]) -> None:
 
 def main() -> None:
     """Parse arguments, generate all tables, and write the CSVs."""
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--out-dir", type=Path, default=Path(__file__).resolve().parent.parent / "data" / "raw")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent / "data" / "raw",
+    )
     parser.add_argument("--customers", type=int, default=1000)
     parser.add_argument("--products", type=int, default=80)
     parser.add_argument("--orders", type=int, default=6000)
-    parser.add_argument("--subscription-share", type=float, default=0.35,
-                        help="share of customers who start a subscription")
+    parser.add_argument(
+        "--subscription-share",
+        type=float,
+        default=0.35,
+        help="share of customers who start a subscription",
+    )
     parser.add_argument("--start", type=date.fromisoformat, default=date(2024, 1, 1))
     parser.add_argument("--end", type=date.fromisoformat, default=date(2026, 10, 31))
-    parser.add_argument("--late-rate", type=float, default=0.03, help="share of rows that load days late")
-    parser.add_argument("--dup-rate", type=float, default=0.01, help="share of rows re-delivered")
+    parser.add_argument(
+        "--late-rate",
+        type=float,
+        default=0.03,
+        help="share of rows that load days late",
+    )
+    parser.add_argument(
+        "--dup-rate", type=float, default=0.01, help="share of rows re-delivered"
+    )
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -637,8 +792,12 @@ def main() -> None:
     tables["subscriptions"] = gen.gen_subscriptions(args.subscription_share)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    id_col = {"customers": "customer_id", "products": "product_id",
-              "orders": "order_id", "subscriptions": "subscription_id"}
+    id_col = {
+        "customers": "customer_id",
+        "products": "product_id",
+        "orders": "order_id",
+        "subscriptions": "subscription_id",
+    }
     for name, rows in tables.items():
         rows = gen.add_duplicates(rows)
         path = args.out_dir / f"{name}.csv"

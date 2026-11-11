@@ -3,13 +3,71 @@ version: 2
 sources:
   - name: raw
     description: >
-      Append-only nightly extracts from the source system, written to data/raw/
-      by scripts/generate_raw_data.py. Every change to a record is a new row.
-      All columns are read as text; the staging models cast them.
+      Append-only nightly extracts from the source system, written to
+      data/raw/ by scripts/generate_raw_data.py. Every change to a record is a
+      new row; nothing is edited in place. All columns are read as text and
+      the staging models cast them.
     meta:
       external_location: "read_csv('data/raw/{name}.csv', header = true, all_varchar = true)"
+    config:
+      # Loads run nightly, so data older than ~1.5 days means a missed load.
+      # The bundled sample data is static and will report as stale.
+      loaded_at_field: "cast(_loaded_at as timestamp)"
+      freshness:
+        warn_after: {count: 36, period: hour}
+        error_after: {count: 72, period: hour}
     tables:
       - name: customers
+        description: Customer profile changes.
+        columns:
+          - name: customer_id
+            data_tests: [not_null]
+          - name: updated_at
+            data_tests: [not_null]
+          - name: _op
+            description: I insert, U update, D delete.
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: [I, U, D]
+          - name: _loaded_at
+            data_tests: [not_null]
+
       - name: products
+        description: Product catalog changes (price, active flag).
+        columns:
+          - name: product_id
+            data_tests: [not_null]
+          - name: updated_at
+            data_tests: [not_null]
+          - name: _op
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: [I, U, D]
+
       - name: orders
+        description: Order status changes. One product per order.
+        columns:
+          - name: order_id
+            data_tests: [not_null]
+          - name: updated_at
+            data_tests: [not_null]
+          - name: _op
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: [I, U, D]
+
       - name: subscriptions
+        description: Subscription changes (plan, status, MRR).
+        columns:
+          - name: subscription_id
+            data_tests: [not_null]
+          - name: updated_at
+            data_tests: [not_null]
+          - name: _op
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: [I, U, D]

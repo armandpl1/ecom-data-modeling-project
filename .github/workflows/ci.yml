@@ -1,0 +1,41 @@
+# Lint, build every dbt model, run every test, and publish the docs site
+# as a build artifact on each push and pull request.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint Python
+        run: |
+          uv run ruff check .
+          uv run black --check .
+          uv run flake8 scripts
+
+      - name: Generate raw data
+        run: uv run python scripts/generate_raw_data.py
+
+      - name: Build models and run tests
+        run: uv run dbt build
+
+      - name: Generate docs
+        run: uv run dbt docs generate --static
+
+      - name: Upload docs site
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-docs
+          path: target/static_index.html

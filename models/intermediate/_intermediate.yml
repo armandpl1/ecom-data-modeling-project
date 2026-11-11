@@ -3,30 +3,77 @@ version: 2
 # Silver layer: business logic, joins and SCD Type 2 history.
 # The *_history models share these columns, built by the
 # scd2_from_history macro:
-#   valid_from / valid_to  period the version was true (valid_to null = still true)
+#   valid_from_timestamp / valid_to_timestamp  period the version was true (valid_to_timestamp null = still true)
 #   is_current             last version of the record
 #   version_number         1, 2, 3 ... per record
 #   is_deleted             tombstone version recording a hard delete
 #   deleted_at             when the record was deleted (on every version)
 
 models:
+  - name: int_customer_tier_history
+    description: >
+      A customer's subscription tier over time, one row per tier period.
+      Tier is the plan of the customer's live (not cancelled) subscription,
+      or 'none'. If several are live, the highest plan wins.
+    data_tests:
+      - scd2_valid_ranges:
+          arguments:
+            entity_key: customer_id
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [customer_id, valid_from_timestamp]
+    columns:
+      - name: subscription_tier
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [none, basic, plus, premium]
+
+  - name: int_customer_changes
+    description: >
+      Ephemeral. One row per moment anything about a customer changed, with
+      their full state at that moment. Merges profile changes (stg_customers)
+      and tier changes (int_customer_tier_history) with ASOF joins.
+
   - name: int_customers_history
     description: >
-      SCD Type 2 customer history. A new version starts only when a tracked
-      attribute changes, so repeated rows with the same values are collapsed.
+      SCD Type 2 customer history. A new version starts only when a profile
+      attribute or the subscription tier changes, so repeated rows with the
+      same values are collapsed.
+    data_tests:
+      - scd2_valid_ranges:
+          arguments:
+            entity_key: customer_id
     columns:
       - name: customer_sk
-        description: Surrogate key of the version (hash of customer_id and valid_from).
+        description: '{{ doc("scd2_sk") }}'
         data_tests: [unique, not_null]
+      - name: valid_from_timestamp
+        description: '{{ doc("valid_from_timestamp") }}'
+        data_tests: [not_null]
+      - name: valid_to_timestamp
+        description: '{{ doc("valid_to_timestamp") }}'
+      - name: is_deleted
+        description: '{{ doc("is_deleted_tombstone") }}'
+      - name: subscription_tier
+        data_tests: [not_null]
 
   - name: int_products_history
     description: SCD Type 2 product history, including price changes and discontinuations.
+    data_tests:
+      - scd2_valid_ranges:
+          arguments:
+            entity_key: product_id
     columns:
       - name: product_sk
         data_tests: [unique, not_null]
 
   - name: int_subscriptions_history
     description: SCD Type 2 subscription history (plan changes, status changes, repricing).
+    data_tests:
+      - scd2_valid_ranges:
+          arguments:
+            entity_key: subscription_id
     columns:
       - name: subscription_version_sk
         data_tests: [unique, not_null]
@@ -39,6 +86,8 @@ models:
     columns:
       - name: order_id
         data_tests: [unique, not_null]
+      - name: net_amount
+        data_tests: [not_null, not_negative]
       - name: is_open
         description: Still placed or shipped at the extract cutoff.
 
