@@ -641,4 +641,6 @@ analyses/                      ad-hoc SQL, e.g. profile at order time vs today
 dbt_project.yml, profiles.yml  dbt configuration
 pyproject.toml                 Python dependencies and tool config
 uv.lock                        locked dependency versions
+PROJECT_STEPS.txt              how the project was built, step by step
+IMPROVEMENTS.txt               remaining gaps and recommended solutions
 ```

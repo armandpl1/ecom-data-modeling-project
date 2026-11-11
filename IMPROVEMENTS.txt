@@ -1,0 +1,362 @@
+# Improvements: gaps and recommended solutions
+
+The modeling is complete: medallion layers, SCD Type 2, a Kimball star
+schema, tests and docs (see PROJECT_STEPS.txt). What's missing is mostly the
+production setup around it.
+
+For each gap below: what happens today, why it matters, the recommended
+solution, and alternatives that were considered.
+
+---
+
+## Summary
+
+| #  | Gap                                    | Impact | Effort | Priority |
+|----|----------------------------------------|--------|--------|----------|
+| 1  | No persistent raw layer                | High   | Small  | 1        |
+| 2  | Full rebuild on every run              | High   | Medium | 2        |
+| 3  | No orchestration or scheduling         | High   | Medium | 3        |
+| 4  | One environment, CI rebuilds all       | Medium | Small  | 4        |
+| 5  | No schema contracts on Gold            | Medium | Small  | 5        |
+| 6  | No unknown-member rows                 | Medium | Small  | 6        |
+| 7  | No metrics layer or consumers          | Medium | Medium | 7        |
+| 8  | No reporting marts                     | Medium | Medium | 8        |
+| 9  | Personal data is unmasked              | Medium | Small  | 9        |
+| 10 | No monitoring or alerting              | Medium | Medium | 10       |
+| 11 | SQL is not linted                      | Low    | Small  | 11       |
+| 12 | SQL is tied to DuckDB                  | Low    | Medium | 12       |
+| 13 | Single-product orders only             | Low    | Small  | 13       |
+
+Gaps 1 and 2 belong together: incremental models need a raw layer that
+keeps every load.
+
+---
+
+## 1. No persistent raw layer
+
+**Today:** dbt reads data/raw/*.csv directly through read_csv. Generating
+the data again overwrites the files, so there is no history of loads and no
+record of what arrived when.
+
+**Why it matters:** incremental models, freshness checks and replaying past
+loads all depend on an append-only raw store. Without one, a bad extract
+can't be traced or rolled back.
+
+**Recommended solution:** a small Python loader that appends each extract
+into raw tables in DuckDB, with a load log so loads can't be applied twice.
+
+1. Change the generator so it can write one day's extract at a time
+   (`--extract-date 2026-10-31`), to simulate nightly batches.
+2. Write scripts/load_raw.py. For each file:
+
+       insert into raw.orders
+       select *, current_timestamp as _ingested_at,
+              '<batch_id>' as _batch_id, '<file name>' as _file_name
+       from read_csv('<file>', all_varchar = true);
+
+3. Record each batch in raw._load_log (batch_id, file, row count, checksum,
+   loaded_at). Skip a file whose checksum is already logged. This makes
+   reruns safe.
+4. In models/staging/_sources.yml, point the sources at the raw.* tables
+   instead of the external read_csv location.
+5. Add source tests: row count of the latest batch > 0, and no batch
+   loaded twice.
+
+**Alternatives:**
+- dlt (data load tool): handles schema evolution, state and incremental
+  loading out of the box. The best choice once real APIs or databases are
+  the source; more than needed for local CSVs.
+- dbt seeds: meant for small static lookup tables, not changing extracts.
+
+---
+
+## 2. Full rebuild on every run
+
+**Today:** every Silver and Gold table is rebuilt from all history on each
+`dbt build`. That's fine for 18k rows, but run time grows with history, not
+with each day's change.
+
+**Why it matters:** this is the difference between a demo and a pipeline
+that runs nightly on years of data. Late-arriving rows also make it the
+hardest part to get right.
+
+**Recommended solution:** incremental models that rebuild only the
+**entities that changed**, with a look-back window for late data.
+
+1. Bronze: materialize as incremental, filtering on _loaded_at.
+
+       {{ config(materialized='incremental', unique_key=['order_id', 'updated_at'],
+                 incremental_strategy='delete+insert') }}
+       ...
+       {% if is_incremental() %}
+       where loaded_at > (select max(loaded_at) from {{ this }})
+                         - interval {{ var('lookback_days', 3) }} day
+       {% endif %}
+
+2. Silver SCD2 history: per-entity rebuild, the safest pattern for SCD2.
+   - Find the entities with any new Bronze row since the last run (within
+     the look-back window).
+   - Rebuild the full history of only those entities from Bronze.
+   - delete+insert on the entity key (customer_id, product_id,
+     subscription_id).
+   - A late row is then placed in the right spot in history, and the old
+     open version is closed correctly, because the entity's whole timeline
+     is recomputed.
+3. Gold facts: incremental with unique_key (order_line_id,
+   subscription_event_id), recomputing orders and subscriptions touched in
+   the window. Dimensions follow their Silver history models.
+4. Add a CI check that an incremental run matches a full refresh: build
+   twice (full, then incremental after loading one more batch) and compare
+   row counts and hashes per table.
+5. Run `dbt build --full-refresh` weekly as a safety net.
+
+**Alternatives:**
+- Appending new versions only: cheaper, but breaks when a late row belongs
+  before the current version (it would need closing and reopening
+  versions in place).
+- dbt snapshots: only fit sources that expose current state; see the README
+  for why they are wrong for this data.
+
+---
+
+## 3. No orchestration or scheduling
+
+**Today:** everything is run by hand. CI only runs on pull requests.
+
+**Why it matters:** a nightly pipeline needs ordering (load, then check
+freshness, then build), retries, failure alerts and a history of runs.
+
+**Recommended solution:** Dagster with the dagster-dbt integration.
+
+1. Each dbt model becomes a Dagster asset, so the dbt lineage graph becomes
+   the orchestration graph. No dependencies are declared twice.
+2. Define the raw load (gap 1) as upstream assets of the dbt sources.
+3. A daily schedule materializes everything: load → `dbt source freshness`
+   → `dbt build`.
+4. Failure sensor → Slack or email alert.
+5. Start with Dagster running locally (`dagster dev`). Deploy later.
+
+**Alternatives:**
+- Airflow + Astronomer Cosmos: the most common in industry and equally
+  capable, but heavier to run locally.
+- Prefect: simple Python flows, less dbt-aware.
+- Cron + a shell script: fine for a first version, with no retries, run
+  history or UI.
+
+---
+
+## 4. One environment, and CI rebuilds everything
+
+**Today:** profiles.yml has a single `dev` target. CI builds every model
+on every pull request.
+
+**Why it matters:** dev work can overwrite production tables, and CI time
+grows with the project.
+
+**Recommended solution:** separate targets, and "slim CI" that builds only
+what changed.
+
+1. In profiles.yml, add targets:
+   - `dev`: ecom_dev.duckdb (local)
+   - `ci`: a temporary database per run
+   - `prod`: ecom.duckdb or MotherDuck (hosted DuckDB)
+2. After each prod run, save target/manifest.json (as a CI artifact or in
+   storage).
+3. In CI, download the prod manifest and run:
+
+       dbt build --select state:modified+ --defer --state prod-artifacts/
+
+   This builds the changed models and everything downstream, and reads
+   unchanged upstream models from prod.
+4. Add `--target prod` only to the scheduled job, never to local commands.
+
+**Alternative:** dbt Cloud provides environments and slim CI built in, at
+a cost.
+
+---
+
+## 5. No schema contracts on Gold
+
+**Today:** a renamed or retyped Gold column only shows up when a dashboard
+breaks.
+
+**Recommended solution:** enforced model contracts plus access levels.
+
+1. For each Gold model in _marts.yml:
+
+       config:
+         contract: {enforced: true}
+       columns:
+         - name: net_revenue
+           data_type: decimal(12,2)
+
+2. Put Gold models in a `marts` group with `access: public`. Make Bronze
+   and Silver `protected` so other projects can't depend on them.
+3. For breaking changes, use model versions (dim_customer_v2) with a
+   deprecation date instead of changing the model in place.
+
+---
+
+## 6. No unknown-member rows in dimensions
+
+**Today:** every fact finds its customer and product version, and tests
+require it. If an order arrives before its customer (an early-arriving
+fact), the build fails or the key is null.
+
+**Recommended solution:** the standard Kimball unknown member.
+
+1. Add a row to dim_customer and dim_product with key '-1' and labels such
+   as 'Unknown', valid from the start of time and never current.
+2. In the facts: coalesce(customer_sk, '-1').
+3. A warn-level test reports how many fact rows point to -1, so the data
+   gap is visible without failing the build.
+4. With incremental models (gap 2), re-point those rows once the dimension
+   row arrives, inside the look-back window.
+
+---
+
+## 7. No metrics layer or consumers
+
+**Today:** MRR, churn and recognized revenue are defined in SQL and
+documentation. Each new query has to re-implement them, and the lineage
+graph stops at the Gold tables.
+
+**Recommended solution:** dbt semantic layer (MetricFlow) and exposures.
+
+1. Install dbt-metricflow[duckdb].
+2. Define semantic models on fact_orders and fact_subscriptions, and
+   metrics: recognized_revenue, average_order_value, mrr, net_new_mrr,
+   churn_rate, trial_conversion_rate.
+3. Query them with `mf query --metrics mrr --group-by metric_time__month`.
+4. Build a small dashboard with Evidence.dev (SQL + Markdown, reads DuckDB
+   directly, version-controlled with the project).
+5. Declare the dashboard as a dbt exposure, so it appears at the end of the
+   lineage graph.
+
+**Alternatives:** Metabase or Superset for a classic BI tool; Streamlit for
+a Python app.
+
+---
+
+## 8. No reporting marts
+
+**Today:** analysts get a star schema and must write the business logic
+themselves.
+
+**Recommended solution:** a `models/marts/reporting/` folder with
+aggregate tables built on the star schema:
+
+1. customer_lifetime_value: orders, revenue, subscription months and MRR
+   per customer.
+2. customer_rfm: recency, frequency and monetary scores, plus a segment.
+3. cohort_retention: share of customers in each first-order month who
+   order again in month 1, 2, 3 and so on. A subscription version too.
+4. repeat_purchase: repeat rate and days between orders.
+
+Each gets a declared grain, a uniqueness test, and a reconciliation test
+against the facts (for example, total revenue matches fact_orders).
+
+---
+
+## 9. Personal data is unmasked
+
+**Today:** email, phone and street address sit unmasked in bronze, silver
+and dim_customer.
+
+**Recommended solution:** tag the columns, and expose masked data by
+default.
+
+1. Tag the columns in YAML: `meta: {pii: true}`. This shows in the docs
+   and can be checked in CI (every PII column must be tagged).
+2. A macro mask_pii(column, type) that returns a hash for emails, the last
+   4 digits for phones, and city and state only for addresses.
+3. Gold exposes dim_customer with masked values. A separate
+   dim_customer_pii in a restricted schema keeps the raw values.
+4. On a warehouse with access control (Snowflake, BigQuery), use its
+   column masking policies instead. DuckDB has no roles, so separate
+   schemas or files are the practical option here.
+
+---
+
+## 10. No monitoring or alerting
+
+**Today:** tests catch broken rules, but not a sudden drop in volume (for
+example, a load with half the usual orders). Freshness is configured but
+nothing runs it on a schedule.
+
+**Recommended solution:**
+
+1. A generic test row_count_within_range: compares the latest batch's row
+   count with the trailing 7-batch average and warns outside ±50%.
+2. Run `dbt source freshness` in the scheduled job (gap 3) before the build.
+3. Parse target/run_results.json after each run and post failures and
+   warnings to Slack: test name, failing row count, and the
+   test_failures view to inspect.
+4. Track run duration and rows per model over time in a small table, to
+   spot slow models.
+
+**Alternatives:** Elementary, Monte Carlo or Datafold for full data
+observability (anomaly detection, lineage-aware alerts). Check that the
+warehouse is supported first; they target cloud warehouses.
+
+---
+
+## 11. SQL is not linted
+
+**Today:** Python is linted with ruff, black and flake8, but the SQL
+models, which are most of the code, are not.
+
+**Recommended solution:** sqlfluff, run in pre-commit hooks and CI.
+
+1. Add sqlfluff and sqlfluff-templater-dbt to the dev dependencies.
+2. Add a .sqlfluff config: dialect duckdb, dbt templater, lowercase
+   keywords, trailing commas, explicit aliases.
+3. Add .pre-commit-config.yaml with ruff, black, flake8 and sqlfluff, so
+   problems are caught before commit.
+4. Add `sqlfluff lint models tests macros` to CI.
+
+---
+
+## 12. SQL is tied to DuckDB
+
+**Today:** the models use DuckDB features: ASOF JOIN, arg_max, qualify,
+`select * exclude`, read_csv and the range() table function. Moving to
+Snowflake or BigQuery would need rewrites.
+
+**Recommended solution:** only if a move to a cloud warehouse is planned.
+
+1. Move DuckDB-specific expressions into macros with adapter.dispatch
+   (for example, asof_join, arg_max, date_spine), each with a duckdb__ and
+   a snowflake__ version.
+2. Use dbt's built-in cross-database macros where they exist
+   (dbt.datediff, dbt.date_trunc, dbt.hash).
+3. Add a CI job that compiles the project against a second adapter.
+
+---
+
+## 13. Single-product orders only
+
+**Today:** the generator puts one product on each order, so fact_orders has
+one line per order. The model is keyed by line, but multi-line orders have
+never been tested.
+
+**Recommended solution:**
+
+1. Add an order_lines source to the generator, with 1–5 lines per order
+   and line-level discounts and returns.
+2. Build stg_order_lines and int_order_lines, then make fact_orders read
+   from lines. order_line_number becomes real.
+3. Add an order-level aggregate (fact_order_headers or a reporting mart),
+   and a test that line totals add up to the order total.
+
+---
+
+## Suggested order of work
+
+1. Gaps 1 + 2: raw layer and incremental models (the core production
+   change)
+2. Gap 3: orchestration (nightly runs)
+3. Gaps 4 + 5 + 6: environments, contracts, unknown members (quick wins)
+4. Gaps 7 + 8: metrics, dashboard and reporting marts (business value)
+5. Gaps 9 + 10 + 11: governance, monitoring and SQL linting
+6. Gaps 12 + 13: only if needed
