@@ -25,6 +25,9 @@ jobs:
           uv run black --check .
           uv run flake8 scripts
 
+      - name: Test the data generator
+        run: uv run pytest
+
       - name: Generate raw data
         run: uv run python scripts/generate_raw_data.py
 

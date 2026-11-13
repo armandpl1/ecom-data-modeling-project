@@ -1,0 +1,213 @@
+# How to learn this repo, step by step
+
+Follow the data: it is generated as raw CSVs, cleaned in Bronze, modeled in
+Silver, and served in Gold. Each stage below says what to read, what to run,
+and a question to check you understood. Answers are at the end.
+
+Budget about one evening per stage. Keep a terminal open in the project root
+with the environment active:
+
+    source deenv/bin/activate
+
+---
+
+## Stage 0: Get it running (30 min)
+
+Goal: see the whole pipeline work before reading any code.
+
+Run:
+
+    python scripts/generate_raw_data.py   # writes data/raw/*.csv
+    dbt build                             # builds every model and runs every test
+    pytest                                # tests for the data generator
+
+Expect: dbt reports PASS for everything and 1 WARN (3 orders whose "shipped"
+row arrived late). Then browse the result:
+
+    dbt docs generate && dbt docs serve   # opens http://localhost:8080
+
+Click the lineage button (bottom right) and look at the whole graph once.
+
+Read: README.md, the top sections "Setup" and "Architecture".
+
+---
+
+## Stage 1: The raw data (1 evening)
+
+Goal: understand what CDC data looks like and what is wrong with it.
+
+Read, in this order:
+1. README.md, section "The raw data": what each file and column means.
+2. data/raw/orders.csv: open it and find one order_id (for example
+   O001054). Read all its rows. That is one order's whole life.
+3. scripts/generate_raw_data.py: the command line, and the generate()
+   function that calls each table generator in order.
+4. scripts/raw_data/__init__.py: the map of the generator modules.
+5. scripts/raw_data/history.py: the most important file in the generator.
+   emit() writes one version of a record; load_time() decides when it
+   arrives; emit_corrected() writes a bad row, then the fix;
+   add_duplicates() re-delivers rows.
+6. One table generator, start to finish: scripts/raw_data/orders.py.
+   Then skim products.py, customers.py and subscriptions.py.
+
+Try:
+- python scripts/generate_raw_data.py --orders 50 --out-dir /tmp/tiny
+  and read /tmp/tiny/orders.csv by hand.
+- Run pytest -v scripts/tests/raw_data/test_history.py and read the tests:
+  each one is a small, exact statement of what history.py does.
+
+Check yourself:
+  Q1. Two rows have the same order_id and the same updated_at. Which one is
+      the truth, and how do you know?
+  Q2. Why does the generator use one seeded random source for everything,
+      and why must the table generators run in a fixed order?
+
+---
+
+## Stage 2: dbt basics and the Bronze layer (1 evening)
+
+Goal: understand how dbt turns SELECT statements into tables, and how raw
+rows are cleaned.
+
+Read:
+1. dbt_project.yml: which folder becomes which schema (bronze, silver,
+   gold) and how each is built (view or table).
+2. profiles.yml: where the DuckDB file lives.
+3. models/staging/_sources.yml: how dbt reads the CSVs as a "source".
+4. models/staging/stg_orders.sql: casting, cleaning, and the
+   deduplication rule (QUALIFY row_number() ... = 1).
+5. models/staging/stg_customers.sql: the phone and email cleanup.
+6. models/staging/_staging.yml: tests on the Bronze models.
+
+Try:
+- dbt build --select stg_orders and look at the row count.
+- Open ecom.duckdb with Python (duckdb.connect("ecom.duckdb")) and run:
+    select * from bronze.stg_orders where order_id = 'O001054'
+  Compare with the raw CSV rows from Stage 1.
+
+Check yourself:
+  Q3. Bronze still has many rows per order. Why not keep only the latest?
+
+---
+
+## Stage 3: Silver and SCD Type 2 (1–2 evenings, the core of the project)
+
+Goal: understand how full history is turned into versions with validity
+dates.
+
+Read:
+1. README.md, section "SCD Type 2: dim_customer". Read it twice.
+2. macros/scd2_from_history.sql: the reusable versioning logic. Trace the
+   four CTEs: hash the tracked columns, drop unchanged rows, set
+   valid_to with lead(), flag the current version.
+3. models/intermediate/int_products_history.sql: the simplest use of the
+   macro.
+4. models/intermediate/int_customer_tier_history.sql and
+   int_customer_changes.sql: merging two timelines (profile and
+   subscription tier) with ASOF joins.
+5. models/intermediate/int_orders.sql and int_orders_enriched.sql: one
+   row per order, joined to the customer and product versions valid when
+   the order was placed.
+
+Try:
+- Customer C00063's history:
+    select version_number, customer_segment, subscription_tier,
+           valid_from_timestamp, valid_to_timestamp, is_current
+    from gold.dim_customer where customer_id = 'C00063'
+    order by version_number
+- Run the analysis that shows why SCD2 matters:
+    dbt compile -s customer_profile_at_order_vs_today
+  then run the SQL in target/compiled/ecom/analyses/.
+
+Check yourself:
+  Q4. Why build SCD2 from the change log instead of using dbt snapshots?
+  Q5. An order was placed on 2025-06-01. How does fact_orders know which
+      version of the customer to point to?
+
+---
+
+## Stage 4: Gold and the star schema (1 evening)
+
+Goal: understand dimensions, facts, grain and additivity.
+
+Read:
+1. README.md, section "Star schema (Gold layer)", including the bus matrix.
+2. models/marts/dim_date.sql: holidays, fiscal calendar, rolling windows.
+3. models/marts/fact_orders.sql: grain, keys, additive vs non-additive
+   measures.
+4. models/marts/fact_subscriptions.sql: MRR movement types.
+5. models/marts/fact_subscription_mrr_monthly.sql: the periodic snapshot.
+
+Try the README's example queries, especially the MRR bridge. Then check
+that the bridge adds up: September MRR + October net change = October MRR.
+
+Check yourself:
+  Q6. Why can you sum net_revenue across orders but not mrr_after across
+      events?
+  Q7. dim_date is joined to fact_orders three times. What is that called,
+      and why?
+
+---
+
+## Stage 5: Tests, docs and CI (1 evening)
+
+Goal: understand how the project proves its own correctness.
+
+Read:
+1. README.md, section "Testing and documentation".
+2. tests/generic/scd2_valid_ranges.sql and not_negative.sql: custom
+   generic tests, used from YAML.
+3. models/marts/_marts.yml: how tests are attached to models and columns.
+4. tests/assert_mrr_movements_reconcile_to_snapshot.sql: a cross-model check.
+5. models/marts/_unit_tests.yml: dbt unit tests with hand-written inputs.
+6. .github/workflows/ci.yml: what runs on every pull request.
+
+Try breaking things on purpose, then put them back:
+- In models/marts/fact_orders.sql, change recognized_revenue so cancelled
+  orders are not zeroed. Run dbt build and see which test fails.
+- In scripts/raw_data/orders.py, change one probability. Run pytest and see
+  test_default_output_is_unchanged fail. That test guards the data that
+  every model and README number depends on.
+
+Check yourself:
+  Q8. What is the difference between a data test and a unit test in dbt?
+
+---
+
+## Stage 6: Make a change of your own (open-ended)
+
+Pick one item from IMPROVEMENTS.txt and build it. Good first choices:
+- Gap 6 (unknown-member rows): small, touches dimensions, facts and tests.
+- Gap 11 (SQL linting with sqlfluff): small, touches tooling and CI.
+- Gap 8 (a reporting mart such as cohort retention): uses everything you
+  learned about the star schema.
+
+Done means: dbt build passes, pytest passes, and the README explains it.
+
+---
+
+## Answers
+
+Q1. The one with the later _loaded_at. Same-timestamp corrections only
+    differ by load time (history.emit_corrected), and stg_orders keeps the
+    row loaded last for each (order_id, updated_at).
+Q2. So the same seed always produces identical files. Every random draw
+    comes from one sequence, so changing the order of calls would change
+    every value after that point.
+Q3. Silver needs the full history to build SCD2 versions and order
+    lifecycles. Picking only the latest row would lose it.
+Q4. The extracts already contain every change with its timestamp, so the
+    history can be rebuilt exactly. Snapshots only record the state at each
+    dbt run and would miss changes between runs.
+Q5. int_orders_enriched joins on customer_id and on
+    valid_from_timestamp <= order_placed_at < valid_to_timestamp, and keeps
+    that version's customer_sk.
+Q6. net_revenue belongs to one order, so totals add up. mrr_after is a
+    balance at a point in time; summing balances across time double counts.
+    Sum mrr_change instead.
+Q7. A role-playing dimension. One calendar table plays three roles: order
+    date, ship date and delivery date.
+Q8. A data test checks the real data after a model is built (for example,
+    no negative totals). A unit test runs the model's SQL on small
+    hand-written inputs and compares with expected output, to check the
+    logic itself.

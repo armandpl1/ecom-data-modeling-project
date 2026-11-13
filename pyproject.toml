@@ -15,6 +15,7 @@ dependencies = [
 dev = [
     "black>=26.10.1",
     "flake8>=7.5.0",
+    "pytest>=9.2.0",
     "ruff>=0.17.4",
 ]
 
@@ -26,3 +27,8 @@ line-length = 88
 
 [tool.ruff]
 line-length = 88
+
+[tool.pytest.ini_options]
+# Python tests for the data generator. (tests/ holds dbt tests.)
+testpaths = ["scripts/tests"]
+pythonpath = ["scripts"]
