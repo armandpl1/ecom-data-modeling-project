@@ -14,13 +14,14 @@ For what is still missing and how to add it, see IMPROVEMENTS.txt.
 
 1. Dependencies are declared in `pyproject.toml` and pinned in `uv.lock`.
 2. The virtual environment lives in `deenv/` (not committed).
-3. Linters: ruff, flake8 and black. Their settings are in `pyproject.toml` and `.flake8`.
+3. Python 3.11 is pinned in `.python-version`.
+4. Linters: ruff, flake8 and black. Their settings are in `pyproject.toml` and `.flake8`.
+   Pre-commit hooks (`.pre-commit-config.yaml`) run the same checks before every commit.
 
 ```bash
-export UV_PROJECT_ENVIRONMENT=deenv
-uv sync
-source deenv/bin/activate
-ruff check . && black --check . && flake8 scripts
+make install   # uv sync --locked, into ./deenv
+make hooks     # install the pre-commit hooks (once)
+make lint      # ruff, black, flake8 and file hygiene
 ```
 
 ---
@@ -33,12 +34,17 @@ ruff check . && black --check . && flake8 scripts
 2. Each file is an append-only extract. Every change is a new row with `updated_at`, `_op` (I/U/D) and `_loaded_at`.
 3. The data includes updates, corrections, late-arriving rows, duplicates, hard deletes and messy values.
 4. The output is reproducible: the same `--seed` always gives the same files.
+5. The logic lives in `scripts/raw_data/`: `history.py` holds the CDC mechanics shared by
+   every table, then one module per table and a CSV writer.
+6. `scripts/tests/` mirrors that layout with pytest tests, including a fingerprint test that
+   fails if the generated data ever changes by accident.
 
 ```bash
-python scripts/generate_raw_data.py            # defaults: 1000 customers, 6000 orders
+make data      # defaults: 1000 customers, 6000 orders
+make test      # generator tests
 ```
 
-**Check:** four CSVs in `data/raw/`. The script prints row counts per file.
+**Check:** four CSVs in `data/raw/`, and `make test` passes.
 
 ---
 
@@ -149,7 +155,7 @@ group by all order by all;
    - every model described
    - all 161 Gold columns described
    - shared definitions as doc blocks in `models/docs.md`, which also holds the docs home page
-9. **CI:** `.github/workflows/ci.yml` lints, generates data, runs `dbt build` and uploads the static docs site.
+9. **Docs site:** published from CI to https://armandpl1.github.io/ecom-data-modeling-project/ (Step 6).
 
 ```bash
 dbt build                           # 16 models, 145 data tests, 2 unit tests
@@ -159,6 +165,32 @@ dbt docs generate && dbt docs serve # lineage graph at http://localhost:8080
 ```
 
 **Check:** `dbt build` reports 0 errors and 1 warning (the 3 late ship events).
+
+---
+
+## Step 6: CI/CD ✅
+
+**Goal:** every change is checked automatically, and the docs site deploys itself.
+
+1. `.github/workflows/ci.yml` runs on every pull request and every push to `main`:
+   lint and unit tests in parallel, then the dbt build, then (on `main` only) a deploy
+   of the docs site to GitHub Pages.
+2. Production practices:
+   - actions pinned to commit SHAs
+   - read-only default token
+   - Python, uv and dependencies pinned
+   - timeouts on every job
+   - artifacts uploaded for debugging failed runs
+3. Dependabot (`.github/dependabot.yml`) opens weekly update PRs for actions and Python packages.
+4. `main` is protected by a GitHub ruleset: pull requests required, the checks `Lint`,
+   `Unit tests (data generator)` and `dbt build and test` must pass, no force pushes.
+5. `make ci` runs the same pipeline locally.
+
+```bash
+make ci
+```
+
+**Check:** the CI/CD badge at the top of the README is green, and the docs site is live.
 
 ---
 
