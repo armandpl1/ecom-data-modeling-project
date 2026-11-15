@@ -1,44 +1,172 @@
-# Lint, build every dbt model, run every test, and publish the docs site
-# as a build artifact on each push and pull request.
-name: CI
+# CI/CD for the e-commerce data model.
+#
+#   lint ──┐
+#          ├─> dbt (build + test) ─> docs ─> deploy-docs (main only)
+#   test ──┘
+#
+# CI (lint, test, dbt, docs) runs on every pull request and every push to main.
+# CD (deploy-docs) publishes the dbt docs site to GitHub Pages, only after a
+# push to main passes every check.
+#
+# Security: actions are pinned to full commit SHAs (the version tag is in the
+# comment; Dependabot keeps both up to date), the default token is read-only,
+# and only the deploy job may write to Pages.
+
+name: CI/CD
 
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
+  workflow_dispatch:
+
+# One run per branch or PR at a time; a new push cancels the outdated run.
+# Runs on main are never cancelled, so every merge gets a full build.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.13.7"
+  # Fail instead of silently re-resolving dependencies
+  UV_LOCKED: "1"
+  FORCE_COLOR: "1"
 
 jobs:
-  build:
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Install dependencies
-        run: uv sync --locked
+        run: uv sync
 
-      - name: Lint Python
-        run: |
-          uv run ruff check .
-          uv run black --check .
-          uv run flake8 scripts
+      - name: Check uv.lock matches pyproject.toml
+        run: uv lock --check
 
-      - name: Test the data generator
-        run: uv run pytest
+      - name: Run pre-commit hooks (ruff, black, flake8, file hygiene)
+        run: uv run pre-commit run --all-files --show-diff-on-failure
 
-      - name: Generate raw data
+  test:
+    name: Unit tests (data generator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run pytest
+        run: uv run pytest --junitxml=reports/pytest.xml
+
+      - name: Upload test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pytest-report
+          path: reports/pytest.xml
+          retention-days: 14
+
+  dbt:
+    name: dbt build and test
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Generate raw data (deterministic)
         run: uv run python scripts/generate_raw_data.py
 
-      - name: Build models and run tests
+      - name: Parse project (fails fast on broken refs or YAML)
+        run: uv run dbt parse
+
+      - name: Build models and run all data and unit tests
         run: uv run dbt build
 
-      - name: Generate docs
+      - name: Generate docs site
         run: uv run dbt docs generate --static
 
-      - name: Upload docs site
-        uses: actions/upload-artifact@v4
+      # Run results and logs make a failed build debuggable without rerunning
+      - name: Upload dbt artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dbt-docs
-          path: target/static_index.html
+          name: dbt-artifacts
+          path: |
+            target/run_results.json
+            target/manifest.json
+            target/catalog.json
+            logs/dbt.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Prepare docs site
+        run: |
+          mkdir -p site
+          cp target/static_index.html site/index.html
+
+      - name: Upload docs site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+          retention-days: 14
+
+  deploy-docs:
+    name: Deploy docs to GitHub Pages
+    needs: dbt
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Deploy
+        id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

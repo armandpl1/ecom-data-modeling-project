@@ -14,13 +14,13 @@ uv sync                               # installs project + dev tools (ruff, flak
 source deenv/bin/activate
 ```
 
-Code quality checks and generator tests:
+Code quality checks and generator tests (the same checks CI runs):
 
 ```bash
-ruff check .
-flake8 scripts
-black --check .
-pytest              # Python tests in scripts/tests/ (dbt tests run with dbt build)
+make hooks          # once: run the checks automatically before every commit
+make lint           # ruff, black, flake8 and file hygiene, via pre-commit
+make test           # Python tests in scripts/tests/ (dbt tests run with dbt build)
+make ci             # the whole CI pipeline, locally
 ```
 
 ## Generating the raw data
@@ -533,15 +533,51 @@ In the docs site, the lineage graph (bottom-right button) shows how the four raw
 
 `dbt docs generate --static` writes `target/static_index.html`, a single self-contained file that opens in a browser without a server. CI builds it and attaches it to every run as a downloadable artifact.
 
-### Continuous integration
+### CI/CD
 
 `.github/workflows/ci.yml` runs on every pull request and every push to `main`:
 
-1. Install dependencies from `uv.lock`
-2. Lint Python with ruff, black and flake8
-3. Generate the raw data. It is deterministic, so CI tests the same data as local runs.
-4. `dbt build`: all models, data tests and unit tests
-5. Generate the static docs site and upload it as an artifact
+```
+lint ──┐
+       ├─> dbt (build + test) ─> docs ─> deploy-docs (main only)
+test ──┘
+```
+
+| Job           | Runs                                                                                     | Blocks         |
+| ------------- | ---------------------------------------------------------------------------------------- | -------------- |
+| `lint`        | `uv lock --check`, then every pre-commit hook: ruff, black, flake8, file hygiene         | `dbt`          |
+| `test`        | `pytest` for the data generator; JUnit report uploaded                                   | `dbt`          |
+| `dbt`         | Generate data, `dbt parse`, `dbt build` (all models, data and unit tests), docs site     | `deploy-docs`  |
+| `deploy-docs` | Publishes the dbt docs site to GitHub Pages. Only on `main`, only after every job passes | (deploys)      |
+
+Production practices in the pipeline:
+
+- **Pinned, reproducible environment.** Python 3.11 (`.python-version`), uv version pinned, dependencies installed only from `uv.lock` (`UV_LOCKED=1`), so CI uses exactly the versions tested locally.
+- **Supply-chain security.**
+  - Every GitHub Action is pinned to a full commit SHA, with its version tag in a comment.
+  - The default token is read-only, and checkout doesn't keep git credentials.
+  - Only the deploy job can write to Pages.
+- **Fast feedback.** Lint and unit tests run in parallel and gate the slower dbt job. A new push to a pull request cancels its outdated run, but runs on `main` are never cancelled.
+- **Debuggable failures.** dbt run results, manifest and logs, plus the pytest report, are uploaded as artifacts even when a job fails.
+- **Bounded runs.** Every job has a timeout.
+- **Same checks locally.** `.pre-commit-config.yaml` runs the same hooks before each commit, and `make ci` runs the whole pipeline locally.
+- **Automated updates.** Dependabot (`.github/dependabot.yml`) opens weekly pull requests for GitHub Actions and Python dependencies. CI checks each one.
+
+Local commands (see `Makefile`):
+
+```bash
+make install   # uv sync --locked
+make hooks     # install the pre-commit hooks (once)
+make lint      # same checks as the CI lint job
+make test      # unit tests
+make build     # generate data, dbt parse, dbt build
+make ci        # everything CI runs
+```
+
+One-time GitHub settings (done in the repository's Settings, not in code):
+
+1. **Pages:** Settings → Pages → Source: **GitHub Actions**, so `deploy-docs` can publish.
+2. **Branch protection for `main`:** Settings → Branches → add a rule. Require a pull request before merging, and require the status checks **Lint**, **Unit tests (data generator)** and **dbt build and test** to pass.
 
 ## Example queries
 
@@ -639,7 +675,10 @@ tests/                         singular tests
 tests/generic/                 custom generic tests (not_negative, scd2_valid_ranges, ...)
 models/docs.md                 doc blocks and the docs site home page
 models/marts/_unit_tests.yml   dbt unit tests
-.github/workflows/ci.yml       CI: lint, build, test, docs
+.github/workflows/ci.yml       CI/CD: lint, test, dbt build, deploy docs to GitHub Pages
+.github/dependabot.yml         weekly dependency update PRs
+.pre-commit-config.yaml        checks run before each commit and in CI
+Makefile                       local commands that mirror CI
 analyses/                      ad-hoc SQL, e.g. profile at order time vs today
 dbt_project.yml, profiles.yml  dbt configuration
 pyproject.toml                 Python dependencies and tool config

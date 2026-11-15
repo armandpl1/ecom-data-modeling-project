@@ -15,3 +15,7 @@ logs/
 *.duckdb
 *.duckdb.wal
 .user.yml
+
+# CI outputs
+reports/
+site/
