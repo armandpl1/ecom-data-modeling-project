@@ -1,6 +1,11 @@
 # ecom-data-modeling-project
 
+[![CI/CD](https://github.com/armandpl1/ecom-data-modeling-project/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/armandpl1/ecom-data-modeling-project/actions/workflows/ci.yml)
+[![dbt docs](https://img.shields.io/badge/dbt%20docs-live-orange)](https://armandpl1.github.io/ecom-data-modeling-project/)
+
 A data modeling project for a fictional e-commerce business, built with dbt and DuckDB.
+
+**Live docs and lineage graph:** https://armandpl1.github.io/ecom-data-modeling-project/
 
 The raw data is synthetic. A Python script generates it with a realistic change history, including updates, corrections, late-arriving rows and duplicates, so the dbt models have to handle what real source extracts look like.
 
