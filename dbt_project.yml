@@ -1,0 +1,44 @@
+name: ecom
+version: "1.0.0"
+profile: ecom
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+analysis-paths: ["analyses"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Calendar range for dim_date
+  date_spine_start: "2024-01-01"
+  date_spine_end: "2026-12-31"
+  # First month of the fiscal year (2 = February, common in retail).
+  # Fiscal years are named by the calendar year they end in.
+  fiscal_year_start_month: 2
+  # Reference date for rolling-window flags in dim_date. Leave unset to use
+  # the last order date in the data.
+  as_of_date: null
+
+models:
+  ecom:
+    # Bronze: cleaned, typed, deduplicated copies of the raw extracts
+    staging:
+      +schema: bronze
+      +materialized: view
+    # Silver: business logic, joins and SCD Type 2 history
+    intermediate:
+      +schema: silver
+      +materialized: table
+    # Gold: dimensional models for business use
+    marts:
+      +schema: gold
+      +materialized: table
+
+data_tests:
+  ecom:
+    # Save the failing rows of each test as a view in the test_failures
+    # schema, so a failure can be inspected with plain SQL.
+    +store_failures: true
+    +store_failures_as: view
+    +schema: test_failures

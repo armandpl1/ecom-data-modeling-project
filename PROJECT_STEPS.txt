@@ -1,0 +1,168 @@
+# Project steps
+
+A step-by-step record of how this project was built, and the steps still to do.
+Each step lists what was done, where it lives, and how to check it.
+
+For the full design (architecture, models, tests), see README.md.
+For what is still missing and how to add it, see IMPROVEMENTS.txt.
+
+---
+
+## Setup: environment
+
+**Goal:** a reproducible Python environment with dbt and code quality tools.
+
+1. Dependencies are declared in `pyproject.toml` and pinned in `uv.lock`.
+2. The virtual environment lives in `deenv/` (not committed).
+3. Linters: ruff, flake8 and black. Their settings are in `pyproject.toml` and `.flake8`.
+
+```bash
+export UV_PROJECT_ENVIRONMENT=deenv
+uv sync
+source deenv/bin/activate
+ruff check . && black --check . && flake8 scripts
+```
+
+---
+
+## Step 1: Generate raw source data ✅
+
+**Goal:** realistic source extracts with change history, so the models have to handle real-world problems.
+
+1. `scripts/generate_raw_data.py` writes four CSVs to `data/raw/`: customers, products, orders and subscriptions.
+2. Each file is an append-only extract. Every change is a new row with `updated_at`, `_op` (I/U/D) and `_loaded_at`.
+3. The data includes updates, corrections, late-arriving rows, duplicates, hard deletes and messy values.
+4. The output is reproducible: the same `--seed` always gives the same files.
+
+```bash
+python scripts/generate_raw_data.py            # defaults: 1000 customers, 6000 orders
+```
+
+**Check:** four CSVs in `data/raw/`. The script prints row counts per file.
+
+---
+
+## Step 2: Medallion architecture ✅
+
+**Goal:** split the dbt project into Bronze, Silver and Gold layers.
+
+1. **Sources:** `models/staging/_sources.yml` reads the CSVs as text through DuckDB `read_csv`.
+2. **Bronze** (`models/staging`, schema `bronze`, views):
+   - `stg_customers`, `stg_products`, `stg_orders`, `stg_subscriptions`
+   - Cast types, trim text, turn blanks into nulls, lowercase emails, standardize phones, flag deletes.
+   - Deduplicate to one row per (key, `updated_at`), keeping the row loaded last. This removes duplicate deliveries and applies same-timestamp corrections.
+3. **Silver** (`models/intermediate`, schema `silver`, tables):
+   - SCD Type 2 history for customers, products and subscriptions, built by the `scd2_from_history` macro.
+   - `int_orders`: one row per order with lifecycle timestamps.
+   - `int_orders_enriched`: orders joined to the customer and product versions valid when the order was placed.
+4. **Gold** (`models/marts`, schema `gold`, tables): star schema (Step 4).
+5. `macros/generate_schema_name.sql` makes the schemas exactly `bronze`, `silver` and `gold`.
+6. `profiles.yml` in the project root points dbt at the local `ecom.duckdb`.
+
+```bash
+dbt build
+```
+
+**Check:** `dbt build` finishes with no errors, and `ecom.duckdb` has `bronze`, `silver` and `gold` schemas.
+
+---
+
+## Step 3: Slowly Changing Dimension Type 2 ✅
+
+**Goal:** keep every version of a customer, so past orders show the profile the customer had at the time.
+
+1. Built with custom SQL from the source change log, not with dbt snapshots. The extracts already contain every change with its timestamp. Snapshots only see the state at each dbt run.
+2. `macros/scd2_from_history.sql`:
+   1. Hashes the tracked columns.
+   2. Drops rows where nothing tracked changed.
+   3. Sets `valid_from_timestamp` / `valid_to_timestamp` with `lead()`.
+   4. Adds `is_current`, `version_number` and `deleted_at`.
+3. **Subscription tier** lives in a different source table, so:
+   - `int_customer_tier_history` builds the tier timeline (`none`, `basic`, `plus`, `premium`).
+   - `int_customer_changes` merges the profile and tier timelines using DuckDB `ASOF JOIN`s.
+   - `int_customers_history` turns the merged stream into versions.
+4. `dim_customer` exposes the versions. `fact_orders.customer_sk` points to the version valid at order time.
+5. `analyses/customer_profile_at_order_vs_today.sql` measures the impact: 1,671 of 5,998 orders (28%) would show the wrong segment, tier, state or email if the customer row were simply overwritten.
+
+```sql
+-- A customer's profile at any point in time
+select * from gold.dim_customer
+where customer_id = 'C00063'
+  and timestamp '2025-06-01' >= valid_from_timestamp
+  and (timestamp '2025-06-01' < valid_to_timestamp or valid_to_timestamp is null);
+```
+
+**Check:** `select * from gold.dim_customer where customer_id = 'C00063' order by version_number` shows 7 versions.
+
+---
+
+## Step 4: Kimball star schema ✅
+
+**Goal:** Gold layer as a star schema with clearly declared grains.
+
+1. **`dim_date`**: one row per day, with:
+   - calendar columns
+   - a fiscal calendar (`fiscal_year_start_month`, default February)
+   - the 11 US federal holidays, plus the weekday they're observed on when they fall on a weekend
+   - Black Friday and Cyber Monday
+   - rolling-window flags (last 7/30/90/365 days, month-to-date, year-to-date, fiscal year-to-date) relative to `as_of_date`
+2. **`dim_product`**: SCD2, plus product line, style, type, color, price band, launch date and discontinued date.
+3. **`dim_customer`**: SCD2 (Step 3).
+4. **`fact_orders`**:
+   - Grain: one row per order line.
+   - Additive measures: quantity, gross revenue, discount, net revenue, cancelled revenue, returned revenue, recognized revenue.
+   - Keys to customer, product, and three date roles (order, ship, delivery).
+5. **`fact_subscriptions`**:
+   - One row per MRR movement or churn event.
+   - Movement types: new, expansion, contraction, pause, resume, reactivation, churn.
+6. **`fact_subscription_mrr_monthly`**: periodic snapshot of MRR per subscription per month.
+7. The README has a bus matrix and an entity diagram.
+
+```sql
+-- Monthly MRR bridge
+select d.year_month, f.movement_type, sum(f.mrr_change)
+from gold.fact_subscriptions f
+join gold.dim_date d on d.date_key = f.event_date_key
+group by all order by all;
+```
+
+**Check:** the MRR movements sum to the snapshot's MRR in every month (October 2026: $4,162.00). A test enforces this.
+
+---
+
+## Step 5: Tests and documentation ✅
+
+**Goal:** show production-grade data quality and documentation.
+
+1. **Built-in tests:** `unique`, `not_null`, `accepted_values`, `relationships`. Every fact key is checked against its dimension.
+2. **Custom generic tests** (`tests/generic/`):
+   - `not_negative`: order totals, revenue, quantities, prices and MRR never drop below zero.
+   - `scd2_valid_ranges`: validity ranges never overlap and have no gaps, only the last version is current, and deleted records close at the delete.
+   - `expression_is_true`: rules across columns, e.g. gross − discount = net.
+   - `unique_combination_of_columns`: composite keys and fact grain.
+3. **Singular tests** (`tests/`): point-in-time joins, order totals, MRR reconciliation, holidays.
+4. **Unit tests** (`models/marts/_unit_tests.yml`): MRR movement classification and order lifecycle roll-up.
+5. **Source tests and freshness:** raw keys, `_op` values, and `_loaded_at` age.
+6. **Severity:** delivered orders whose ship event arrived late only warn (`is_missing_ship_event`).
+7. **Stored failures:** failing rows are saved as views in the `test_failures` schema.
+8. **Documentation:**
+   - every model described
+   - all 161 Gold columns described
+   - shared definitions as doc blocks in `models/docs.md`, which also holds the docs home page
+9. **CI:** `.github/workflows/ci.yml` lints, generates data, runs `dbt build` and uploads the static docs site.
+
+```bash
+dbt build                           # 16 models, 145 data tests, 2 unit tests
+dbt test --select test_type:unit
+dbt source freshness                # reports stale on the static sample data
+dbt docs generate && dbt docs serve # lineage graph at http://localhost:8080
+```
+
+**Check:** `dbt build` reports 0 errors and 1 warning (the 3 late ship events).
+
+---
+
+## Next steps
+
+The gaps that remain, and the recommended solution for each, are in
+IMPROVEMENTS.txt.
