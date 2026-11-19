@@ -691,4 +691,5 @@ uv.lock                        locked dependency versions
 PROJECT_STEPS.txt              how the project was built, step by step
 IMPROVEMENTS.txt               remaining gaps and recommended solutions
 LEARNING_GUIDE.txt             how to learn this repo, step by step
+AGENTS.md                      standards for anyone (or any AI agent) changing this repo
 ```
