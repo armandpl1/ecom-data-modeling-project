@@ -117,6 +117,9 @@ jobs:
       - name: Generate raw data (deterministic)
         run: uv run python scripts/generate_raw_data.py
 
+      - name: Load the extracts into the raw layer (append-only, logged)
+        run: uv run python scripts/load_raw.py
+
       - name: Parse project (fails fast on broken refs or YAML)
         run: uv run dbt parse
 

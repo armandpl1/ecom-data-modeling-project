@@ -4,7 +4,7 @@
 export UV_PROJECT_ENVIRONMENT := deenv
 RUN := uv run
 
-.PHONY: help install hooks lint test data build docs ci clean
+.PHONY: help install hooks lint test data load build docs ci clean
 
 help:  ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -25,7 +25,10 @@ test:  ## Unit tests for the data generator
 data:  ## Generate the raw CSVs
 	$(RUN) python scripts/generate_raw_data.py
 
-build: data  ## Build all dbt models and run all dbt tests
+load: data  ## Append the raw CSVs to the raw layer in ecom.duckdb (reruns are safe)
+	$(RUN) python scripts/load_raw.py
+
+build: load  ## Build all dbt models and run all dbt tests
 	$(RUN) dbt parse
 	$(RUN) dbt build
 

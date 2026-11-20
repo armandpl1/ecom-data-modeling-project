@@ -13,7 +13,7 @@ solution, and alternatives that were considered.
 
 | #  | Gap                                    | Impact | Effort | Priority |
 |----|----------------------------------------|--------|--------|----------|
-| 1  | No persistent raw layer                | High   | Small  | 1        |
+| 1  | No persistent raw layer (done)         | High   | Small  | 1        |
 | 2  | Full rebuild on every run              | High   | Medium | 2        |
 | 3  | No orchestration or scheduling         | High   | Medium | 3        |
 | 4  | One environment, CI rebuilds all       | Medium | Small  | 4        |
@@ -34,8 +34,14 @@ keeps every load.
 
 ## 1. No persistent raw layer
 
-**Today:** dbt reads data/raw/*.csv directly through read_csv. Generating
-the data again overwrites the files, so there is no history of loads and no
+**Status: done (Step 7 in PROJECT_STEPS.txt),** except step 1 below: the
+generator still writes the whole history at once, not one day per run.
+scripts/load_raw.py appends extracts to raw.* tables, logs each batch with
+its SHA-256 in raw._load_log, skips files already loaded, and the dbt sources
+read the raw tables. The rest of this section is the original analysis.
+
+**Before:** dbt read data/raw/*.csv directly through read_csv. Generating
+the data again overwrote the files, so there was no history of loads and no
 record of what arrived when.
 
 **Why it matters:** incremental models, freshness checks and replaying past
