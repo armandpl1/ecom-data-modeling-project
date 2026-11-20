@@ -18,6 +18,7 @@ Goal: see the whole pipeline work before reading any code.
 Run:
 
     python scripts/generate_raw_data.py   # writes data/raw/*.csv
+    python scripts/load_raw.py            # appends them to the raw layer in ecom.duckdb
     dbt build                             # builds every model and runs every test
     pytest                                # tests for the data generator
 

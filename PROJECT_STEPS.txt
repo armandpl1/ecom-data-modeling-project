@@ -52,7 +52,7 @@ make test      # generator tests
 
 **Goal:** split the dbt project into Bronze, Silver and Gold layers.
 
-1. **Sources:** `models/staging/_sources.yml` reads the CSVs as text through DuckDB `read_csv`.
+1. **Sources:** `models/staging/_sources.yml` reads the append-only `raw.*` tables (Step 7), all columns as text.
 2. **Bronze** (`models/staging`, schema `bronze`, views):
    - `stg_customers`, `stg_products`, `stg_orders`, `stg_subscriptions`
    - Cast types, trim text, turn blanks into nulls, lowercase emails, standardize phones, flag deletes.
@@ -191,6 +191,29 @@ make ci
 ```
 
 **Check:** the CI/CD badge at the top of the README is green, and the docs site is live.
+
+---
+
+## Step 7: Persistent raw layer ✅
+
+**Goal:** keep every load, so extracts can be traced and replayed, and make
+loading safe to rerun (gap 1 in IMPROVEMENTS.txt).
+
+1. `scripts/load_raw.py` appends each CSV to `raw.<table>` in `ecom.duckdb`,
+   adding `_ingested_at`, `_batch_id` and `_file_name` to every row.
+2. Each load is logged in `raw._load_log` with the file's SHA-256; a file
+   already logged is skipped. Rows and log entry are one transaction.
+3. The dbt sources read the raw tables instead of the CSVs; `_load_log` is a
+   source with not-null, unique and accepted-values tests.
+4. Two singular tests: `assert_raw_no_extract_loaded_twice` and
+   `assert_raw_batches_not_empty` (the logged row count matches what landed).
+5. `make load` and a CI step run the loader between generating and building.
+6. `scripts/tests/test_load_raw.py`: first load, safe rerun, appended new
+   extract, columns matched by name, failed load leaves nothing behind.
+
+**Check:** `make build` twice. The second `load` reports all 4 extracts as
+skipped, and `dbt build` passes both times. Gold tables are identical to
+building from the CSVs directly (checked: same rows and content).
 
 ---
 
