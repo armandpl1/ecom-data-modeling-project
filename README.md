@@ -154,6 +154,36 @@ slow disk it took 74.7 s against 45.6 s for a full refresh of both batches,
 because the per-entity bookkeeping costs more than rebuilding 21k rows. The
 work it skips grows with history, so the gain appears at real volumes.
 
+## Service levels, runbooks and incidents
+
+`ops/slos.yml` defines what "healthy" means, and `scripts/check_slos.py`
+(`make check-slos`) checks it:
+
+| Objective             | Healthy when                                                                        | Runbook                                                        |
+| --------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `raw_freshness`       | every raw table loaded within 36 h of the reference time                            | [raw-freshness.md](docs/runbooks/raw-freshness.md)             |
+| `batch_volume`        | each table's latest batch has at least 50% of its previous average, and isn't empty | [batch-volume.md](docs/runbooks/batch-volume.md)               |
+| `warehouse_caught_up` | Bronze has processed the newest raw load of every table                             | [warehouse-caught-up.md](docs/runbooks/warehouse-caught-up.md) |
+| `dbt_tests`           | the last dbt build had no failure or error, and only allowed warnings               | [dbt-tests.md](docs/runbooks/dbt-tests.md)                     |
+
+- **Every result names its runbook** (`docs/runbooks/`): symptom, likely
+  causes, the exact queries to diagnose, the fix and how to verify it.
+- **In the pipeline:** the `service_levels` Dagster asset runs the check
+  after `dbt build`. A breach fails the run, so `alert_on_failure` posts the
+  breaches and their runbooks to `ALERT_WEBHOOK_URL`.
+- **In CI:** the `dbt` job runs the check after `dbt build` and uploads
+  `target/slo_report.json`.
+- **Freshness reference:** by default the newest load in `raw._load_log`, so
+  the check asks "did every table keep up with the latest load?". The sample
+  data is static, so wall-clock freshness (`--reference now`) always breaches
+  here; a real daily deployment would use it.
+
+**A real incident, reproduced:** an orders extract arriving with 10% of its
+rows. `dbt build` passed all 176 tests; the `batch_volume` check caught it.
+The batch was quarantined and orders rebuilt, about 3 minutes after delivery,
+with Gold identical to before. Timeline and lessons:
+[docs/postmortems/2026-11-21-truncated-orders-extract.md](docs/postmortems/2026-11-21-truncated-orders-extract.md).
+
 ## Semantic layer and dashboard
 
 **Metrics are defined once**, in the dbt semantic layer (MetricFlow,
@@ -763,6 +793,7 @@ make test      # unit tests
 make build     # generate data, load the raw layer, dbt parse, dbt build
 make pipeline  # the same, orchestrated by Dagster
 make check-incremental  # incremental runs vs a full refresh: Gold must be identical
+make check-slos         # service-level objectives; each breach names its runbook
 make metrics            # validate the semantic layer and export dashboard datasets
 make dashboard          # build the Evidence dashboard (needs Node.js)
 make ci        # everything CI runs
@@ -861,6 +892,10 @@ dbt docs generate && dbt docs serve   # browse model docs and lineage
 scripts/generate_raw_data.py   raw data generator (command line)
 scripts/load_raw.py            loads the extracts into the append-only raw layer, logged in raw._load_log
 scripts/orchestration/         Dagster assets, daily job, schedule and failure alerts
+scripts/check_slos.py          checks the service-level objectives in ops/slos.yml
+ops/slos.yml                   service-level objectives and their runbooks
+docs/runbooks/                 one runbook per alert
+docs/postmortems/              incident write-ups
 scripts/export_metrics.py      runs mf query for each dashboard dataset, writes CSVs
 models/semantic/               semantic models, metrics and the dashboard exposure
 dashboard/                     Evidence dashboard over the semantic-layer metrics

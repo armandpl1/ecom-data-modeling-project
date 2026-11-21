@@ -126,6 +126,13 @@ jobs:
       - name: Build models and run all data and unit tests
         run: uv run dbt build
 
+      - name: Check the service-level objectives (ops/slos.yml)
+        # Freshness is measured against the latest load (the sample data is
+        # static); fails on any breach, and every breach names its runbook.
+        run: |
+          mkdir -p target
+          uv run python scripts/check_slos.py --json target/slo_report.json
+
       - name: Validate the semantic layer and export its metrics
         # MetricFlow checks every semantic model and metric against the built
         # warehouse, then the dashboard's datasets are exported as CSV.
@@ -152,6 +159,7 @@ jobs:
           name: dbt-artifacts
           path: |
             target/run_results.json
+            target/slo_report.json
             target/manifest.json
             dashboard/sources/metrics/*.csv
             target/catalog.json

@@ -28,6 +28,7 @@ import os
 import urllib.request
 from pathlib import Path
 
+import check_slos
 import dagster as dg
 import generate_raw_data
 from dagster_dbt import DbtCliResource, DbtProject, dbt_assets
@@ -46,7 +47,8 @@ class WarehousePaths(dg.ConfigurableResource):
     """Where the extracts land and where the DuckDB warehouse lives."""
 
     raw_dir: str = str(ROOT / "data" / "raw")
-    database: str = str(ROOT / "ecom.duckdb")
+    database: str = os.environ.get("ECOM_DUCKDB_PATH", str(ROOT / "ecom.duckdb"))
+    run_results: str = str(ROOT / "target" / "last_pipeline_run_results.json")
 
 
 @dg.asset(
@@ -95,15 +97,66 @@ def raw_layer(context: dg.AssetExecutionContext, paths: WarehousePaths):
     )
 
 
+# Where the dbt step saves its run_results.json for the service-level check
+LAST_RUN_RESULTS = ROOT / "target" / "last_pipeline_run_results.json"
+
+
 @dbt_assets(manifest=dbt_project.manifest_path, project=dbt_project)
 def dbt_models(context: dg.AssetExecutionContext, dbt: DbtCliResource):
-    yield from dbt.cli(["build"], context=context).stream()
+    invocation = dbt.cli(["build"], context=context, raise_on_error=False)
+    yield from invocation.stream()
+    LAST_RUN_RESULTS.parent.mkdir(parents=True, exist_ok=True)
+    LAST_RUN_RESULTS.write_text(json.dumps(invocation.get_artifact("run_results.json")))
+    if not invocation.is_successful():
+        raise dg.Failure(description="dbt build failed: see docs/runbooks/dbt-tests.md")
+
+
+def breach_summary(report: dict) -> str:
+    breached = [r for r in report["results"] if not r["met"]]
+    lines = [f"{len(breached)} service-level objective(s) breached:"]
+    lines += [
+        f"- {r['objective']} / {r['subject']}: {r['value']} "
+        f"(target {r['target']}); runbook {r['runbook']}"
+        for r in breached
+    ]
+    return "\n".join(lines)
+
+
+@dg.asset(
+    deps=[dbt_models],
+    group_name="operations",
+    description="Checks ops/slos.yml after each run; a breach fails the run, alerts.",
+)
+def service_levels(paths: WarehousePaths) -> dg.MaterializeResult:
+    report = check_slos.evaluate(
+        Path(paths.database),
+        Path(paths.run_results),
+        check_slos.load_config(check_slos.DEFAULT_CONFIG),
+    )
+    metadata = {
+        "breached": report["breached"],
+        "reference": report["reference"],
+        "report": dg.MetadataValue.md(
+            "\n".join(
+                f"- {'met' if r['met'] else '**BREACHED**'}: {r['objective']} / "
+                f"{r['subject']}: {r['value']}"
+                for r in report["results"]
+            )
+        ),
+    }
+    if report["breached"]:
+        # Fails the run, so alert_on_failure posts this message with the runbooks
+        raise dg.Failure(description=breach_summary(report), metadata=metadata)
+    return dg.MaterializeResult(metadata=metadata)
 
 
 daily_pipeline = dg.define_asset_job(
     "daily_pipeline",
     selection=dg.AssetSelection.all(),
-    description="Generate extracts, load the raw layer, then dbt build with all tests.",
+    description=(
+        "Generate extracts, load the raw layer, dbt build with all tests, then "
+        "check the service-level objectives."
+    ),
 )
 
 daily_schedule = dg.ScheduleDefinition(
@@ -150,7 +203,7 @@ def alert_on_failure(context: dg.RunFailureSensorContext) -> None:
 
 
 defs = dg.Definitions(
-    assets=[source_extracts, raw_layer, dbt_models],
+    assets=[source_extracts, raw_layer, dbt_models, service_levels],
     jobs=[daily_pipeline],
     schedules=[daily_schedule],
     sensors=[alert_on_failure],

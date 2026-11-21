@@ -22,3 +22,6 @@ logs/
 # CI outputs
 reports/
 site/
+
+# Temporary Dagster home created by `dagster job execute` without DAGSTER_HOME
+.tmp_dagster_home_*/

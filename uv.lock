@@ -684,6 +684,7 @@ dependencies = [
     { name = "dbt-metricflow" },
     { name = "duckdb" },
     { name = "faker" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -705,6 +706,7 @@ requires-dist = [
     { name = "dbt-metricflow", specifier = ">=0.16.0" },
     { name = "duckdb", specifier = ">=2.0.0" },
     { name = "faker", specifier = ">=40.44.0" },
+    { name = "pyyaml", specifier = ">=6" },
 ]
 
 [package.metadata.requires-dev]

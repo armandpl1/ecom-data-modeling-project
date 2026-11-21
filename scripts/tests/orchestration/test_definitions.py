@@ -8,11 +8,13 @@ import pytest
 from orchestration import definitions
 from orchestration.definitions import (
     WarehousePaths,
+    breach_summary,
     daily_pipeline,
     defs,
     failure_message,
     raw_layer,
     send_alert,
+    service_levels,
     source_extracts,
 )
 
@@ -131,4 +133,74 @@ def test_send_alert_posts_json(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_failure_message() -> None:
     assert failure_message("daily_pipeline", "abc", None) == (
         "Pipeline daily_pipeline failed (run abc): unknown error"
+    )
+
+
+def test_service_levels_runs_after_dbt(graph) -> None:
+    levels = graph.get(dg.AssetKey("service_levels"))
+    [fact] = keys_named(graph, "fact_orders")
+    assert fact in levels.parent_keys
+
+
+def _paths_for(tmp_path: Path, run_results: dict) -> WarehousePaths:
+    from test_check_slos import make_warehouse
+
+    results = tmp_path / "run_results.json"
+    results.write_text(json.dumps({"results": run_results}))
+    db = make_warehouse(tmp_path / "w.duckdb")
+    return WarehousePaths(
+        raw_dir=str(tmp_path / "raw"), database=str(db), run_results=str(results)
+    )
+
+
+def test_service_levels_passes_on_a_healthy_warehouse(tmp_path: Path) -> None:
+    paths = _paths_for(tmp_path, [{"unique_id": "test.ecom.x", "status": "pass"}])
+    result = dg.materialize(
+        [service_levels],
+        resources={"paths": paths},
+        instance=dg.DagsterInstance.ephemeral(),
+    )
+    assert result.success
+
+
+def test_service_levels_breach_fails_the_run_with_runbooks(tmp_path: Path) -> None:
+    paths = _paths_for(tmp_path, [{"unique_id": "test.ecom.x", "status": "fail"}])
+    result = dg.materialize(
+        [service_levels],
+        resources={"paths": paths},
+        instance=dg.DagsterInstance.ephemeral(),
+        raise_on_error=False,
+    )
+    assert not result.success
+    [failure] = [e for e in result.all_events if e.event_type_value == "STEP_FAILURE"]
+    message = str(failure.event_specific_data.error)
+    assert "dbt_tests" in message and "docs/runbooks/dbt-tests.md" in message
+
+
+def test_breach_summary_lists_each_breach_with_its_runbook() -> None:
+    report = {
+        "results": [
+            {
+                "objective": "batch_volume",
+                "subject": "orders",
+                "met": False,
+                "value": "40 rows",
+                "target": ">= 50%",
+                "runbook": "docs/runbooks/b.md",
+            },
+            {
+                "objective": "raw_freshness",
+                "subject": "orders",
+                "met": True,
+                "value": "0 h",
+                "target": "<= 36 h",
+                "runbook": "docs/runbooks/r.md",
+            },
+        ]
+    }
+    summary = breach_summary(report)
+    assert summary.startswith("1 service-level objective(s) breached")
+    assert (
+        "batch_volume / orders: 40 rows (target >= 50%); runbook docs/runbooks/b.md"
+        in summary
     )

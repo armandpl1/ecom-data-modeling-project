@@ -1,0 +1,34 @@
+# Service-level objectives for the pipeline, checked by scripts/check_slos.py
+# (`make check-slos`) and by the service_levels Dagster asset after each run.
+# Every objective links to the runbook that says what to do when it breaches.
+
+# What "now" means for freshness:
+#   latest_load  the newest load in raw._load_log. Measures whether every
+#                table kept up with the newest load, so it is meaningful for
+#                the bundled static sample data (and is what CI uses).
+#   now          the wall-clock time. Use this in a real daily deployment;
+#                with the static sample data it always breaches.
+reference: latest_load
+
+objectives:
+  raw_freshness:
+    description: Every raw table was loaded recently.
+    max_age_hours: 36        # the loads are nightly; 36 h allows one late run
+    runbook: docs/runbooks/raw-freshness.md
+
+  batch_volume:
+    description: The latest batch of each table is not suspiciously small.
+    # Latest batch rows / average rows of the previous batches of the same table.
+    min_ratio: 0.5
+    runbook: docs/runbooks/batch-volume.md
+
+  warehouse_caught_up:
+    description: Bronze has processed the newest raw load of every table.
+    runbook: docs/runbooks/warehouse-caught-up.md
+
+  dbt_tests:
+    description: The last dbt build had no failing or erroring tests or models.
+    # Warnings that are documented, self-healing data gaps (see README).
+    allowed_warnings:
+      - delivered_orders_have_ship_event
+    runbook: docs/runbooks/dbt-tests.md
