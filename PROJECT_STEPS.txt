@@ -217,6 +217,31 @@ building from the CSVs directly (checked: same rows and content).
 
 ---
 
+## Step 8: Orchestration with Dagster ✅
+
+**Goal:** run the pipeline in order on a schedule, with alerts, instead of by
+hand (gap 3 in IMPROVEMENTS.txt).
+
+1. `scripts/orchestration/definitions.py` defines the assets: the generator
+   (`source_extracts`), the raw layer (one asset per raw table plus
+   `_load_log`) and every dbt model (`dagster-dbt`). dbt tests become asset
+   checks.
+2. The raw assets use the dbt source keys (`raw/<table>`), so lineage runs
+   from the files to Gold.
+3. `daily_pipeline` job, `daily_pipeline_schedule` (06:00 Toronto, off by
+   default) and an `alert_on_failure` sensor that posts to `ALERT_WEBHOOK_URL`.
+4. `make pipeline` runs it once; `make orchestrate` opens the UI. CI runs the
+   pipeline end to end.
+5. `scripts/tests/orchestration/test_definitions.py`: every built dbt model is
+   an asset, the lineage, checks, schedule, sensor, a real load plus rerun of
+   the raw layer, and the alert webhook.
+
+**Check:** `make pipeline` twice. Both runs succeed; the second reloads
+nothing. In `make orchestrate`, the lineage graph shows `source_extracts`
+feeding the raw tables, then Bronze, Silver and Gold.
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in

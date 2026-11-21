@@ -5,6 +5,8 @@ description = "Data modeling project for a fictional e-commerce business, built 
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "dagster>=1.13.31",
+    "dagster-dbt>=0.29.31",
     "dbt-core>=1.12.6",
     "dbt-duckdb>=1.11.1",
     "duckdb>=2.0.0",
@@ -14,6 +16,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "black>=26.10.1",
+    "dagster-webserver>=1.13.31",
     "flake8>=7.5.0",
     "pre-commit>=4.7.0",
     "pytest>=9.2.0",

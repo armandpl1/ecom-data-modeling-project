@@ -19,6 +19,7 @@ Run:
 
     python scripts/generate_raw_data.py   # writes data/raw/*.csv
     python scripts/load_raw.py            # appends them to the raw layer in ecom.duckdb
+    make orchestrate                      # optional: the same pipeline in the Dagster UI
     dbt build                             # builds every model and runs every test
     pytest                                # tests for the data generator
 

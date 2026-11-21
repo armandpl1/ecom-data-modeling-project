@@ -82,6 +82,38 @@ default data the first load adds 21,442 rows in 4 batches, a second run
 skips all 4, and every Gold table is identical to building from the CSVs
 directly.
 
+## Orchestration with Dagster
+
+The whole pipeline is defined as Dagster assets in
+`scripts/orchestration/definitions.py`:
+
+```text
+source_extracts -> raw.customers, raw.products, raw.orders, raw.subscriptions, raw._load_log -> dbt models
+(generator)        (scripts/load_raw.py)                                                     (Bronze, Silver, Gold)
+```
+
+- **One lineage graph from files to Gold.** The loader's assets use the same
+  keys dagster-dbt gives the dbt sources, so `stg_customers` depends on
+  `raw/customers`, which depends on the extracts.
+- **dbt models are assets, dbt tests are asset checks** (16 built models, 130 checks).
+- **`daily_pipeline`** runs everything; **`daily_pipeline_schedule`** runs it at
+  06:00 Toronto time. It is off by default; turn it on in the UI.
+- **`alert_on_failure`** fires on any failed run: it logs the error and, if
+  `ALERT_WEBHOOK_URL` is set, posts it to that Slack-compatible webhook.
+- `dbt source freshness` is not in the run, because the bundled sample data is
+  static and always reports as stale (see "Source freshness" below).
+
+```bash
+make pipeline      # run the daily pipeline once
+make orchestrate   # Dagster UI at http://localhost:3000: lineage, runs, schedule
+```
+
+Measured on this repo's default data: a full run passes every dbt test (one
+known, documented warning), and a second run reloads nothing because every
+extract is already in the load log. CI runs the pipeline end to end after the
+plain `dbt build`. Dagster creates its local run database on first use, which
+took about 4 minutes on a slow laptop disk; later runs reuse it.
+
 ## The raw data
 
 Each file is an append-only extract, as if copied nightly from the source system. Every change to a record is a **new row**; nothing is edited in place. To get the current state of a record you have to pick its latest version.
@@ -604,6 +636,7 @@ make hooks     # install the pre-commit hooks (once)
 make lint      # same checks as the CI lint job
 make test      # unit tests
 make build     # generate data, load the raw layer, dbt parse, dbt build
+make pipeline  # the same, orchestrated by Dagster
 make ci        # everything CI runs
 ```
 
@@ -699,6 +732,7 @@ dbt docs generate && dbt docs serve   # browse model docs and lineage
 ```
 scripts/generate_raw_data.py   raw data generator (command line)
 scripts/load_raw.py            loads the extracts into the append-only raw layer, logged in raw._load_log
+scripts/orchestration/         Dagster assets, daily job, schedule and failure alerts
 scripts/raw_data/              generator logic: history (CDC mechanics), one module per table, CSV writer
 scripts/tests/                 Python tests for the generator, mirroring scripts/
 data/raw/                      generated CSVs (not committed)

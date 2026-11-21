@@ -4,7 +4,7 @@
 export UV_PROJECT_ENVIRONMENT := deenv
 RUN := uv run
 
-.PHONY: help install hooks lint test data load build docs ci clean
+.PHONY: help install hooks lint test data load build pipeline orchestrate docs ci clean
 
 help:  ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -31,6 +31,15 @@ load: data  ## Append the raw CSVs to the raw layer in ecom.duckdb (reruns are s
 build: load  ## Build all dbt models and run all dbt tests
 	$(RUN) dbt parse
 	$(RUN) dbt build
+
+DAGSTER := DAGSTER_HOME=$(CURDIR)/.dagster $(RUN) dagster
+pipeline:  ## Run the whole daily pipeline once with Dagster (generate, load, dbt build)
+	mkdir -p .dagster
+	$(DAGSTER) job execute -m orchestration.definitions -d scripts -j daily_pipeline
+
+orchestrate:  ## Open the Dagster UI (lineage, runs, schedule) at http://localhost:3000
+	mkdir -p .dagster
+	$(DAGSTER) dev -m orchestration.definitions -d scripts
 
 docs:  ## Generate and serve the dbt docs site
 	$(RUN) dbt docs generate
