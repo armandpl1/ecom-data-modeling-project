@@ -1,0 +1,48 @@
+version: 2
+
+# Restricted layer: raw personal data, kept out of Gold.
+# Every personal-data column is tagged meta: {pii: true}.
+
+models:
+  - name: dim_customer_pii
+    description: >
+      Raw personal data for each customer version in gold.dim_customer, joined
+      on customer_sk. Kept in the `restricted` schema so it can be secured
+      separately; Gold exposes only masked values (see the mask_pii macro).
+    columns:
+      - name: customer_sk
+        description: '{{ doc("scd2_sk") }}'
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_sk
+      - name: customer_id
+        description: 'Natural key of the customer, the same on every version.'
+        data_tests: [not_null]
+      - name: first_name
+        description: 'First name, trimmed.'
+        meta: {pii: true}
+      - name: last_name
+        description: 'Last name, trimmed.'
+        meta: {pii: true}
+      - name: full_name
+        description: 'first_name and last_name.'
+        meta: {pii: true}
+      - name: email
+        description: 'Email address, lowercased and trimmed.'
+        meta: {pii: true}
+      - name: phone_number
+        description: '10-digit US phone number without country code. Null if missing in the source.'
+        meta: {pii: true}
+      - name: phone_extension
+        description: 'Phone extension, if any.'
+        meta: {pii: true}
+      - name: street_address
+        description: 'Street address.'
+        meta: {pii: true}
+      - name: postal_code
+        description: 'ZIP code, kept as text to preserve leading zeros.'
+        meta: {pii: true}

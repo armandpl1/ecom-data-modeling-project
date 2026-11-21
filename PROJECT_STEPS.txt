@@ -242,6 +242,29 @@ feeding the raw tables, then Bronze, Silver and Gold.
 
 ---
 
+## Step 9: Personal data masking and Gold contracts ✅
+
+**Goal:** keep raw personal data out of Gold, and stop Gold schemas from
+changing by accident (gaps 9 and 5 in IMPROVEMENTS.txt).
+
+1. `macros/mask_pii.sql`: email hash and domain, last 4 phone digits,
+   initials, first 3 ZIP digits.
+2. `dim_customer` exposes only masked columns. Raw values move to
+   `restricted.dim_customer_pii` (`models/restricted/`), joined on
+   `customer_sk`. PII columns are tagged `meta: {pii: true}`.
+3. Tests: `assert_no_raw_pii_in_gold` (no raw personal-data column in any
+   Gold table) and `assert_dim_customer_pii_is_masked` (masked values only).
+4. Every Gold model has `contract: {enforced: true}` and a data type on each
+   of its 158 columns.
+5. The SCD2 analysis compares `email_hash` instead of `email`; its results
+   are unchanged (211 email changes, 1,671 orders affected, 28%).
+
+**Check:** `dbt build` passes (177 nodes, the one known warning). Add a Gold
+table with an `email` column: the build fails. Change a Gold column's type:
+the build fails with a contract error.
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in

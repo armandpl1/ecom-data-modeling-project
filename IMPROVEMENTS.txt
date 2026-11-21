@@ -17,11 +17,11 @@ solution, and alternatives that were considered.
 | 2  | Full rebuild on every run              | High   | Medium | 2        |
 | 3  | No orchestration (done)                | High   | Medium | 3        |
 | 4  | One environment, CI rebuilds all       | Medium | Small  | 4        |
-| 5  | No schema contracts on Gold            | Medium | Small  | 5        |
+| 5  | No schema contracts on Gold (done)     | Medium | Small  | 5        |
 | 6  | No unknown-member rows                 | Medium | Small  | 6        |
 | 7  | No metrics layer or consumers          | Medium | Medium | 7        |
 | 8  | No reporting marts                     | Medium | Medium | 8        |
-| 9  | Personal data is unmasked              | Medium | Small  | 9        |
+| 9  | Personal data is unmasked (done)       | Medium | Small  | 9        |
 | 10 | No monitoring or alerting              | Medium | Medium | 10       |
 | 11 | SQL is not linted                      | Low    | Small  | 11       |
 | 12 | SQL is tied to DuckDB                  | Low    | Medium | 12       |
@@ -189,6 +189,10 @@ a cost.
 
 ## 5. No schema contracts on Gold
 
+**Status: done for contracts (Step 9 in PROJECT_STEPS.txt).** Every Gold
+model has an enforced contract with a type on each column. Not done: access
+levels and model versions (steps 2 and 3 below).
+
 **Today:** a renamed or retyped Gold column only shows up when a dashboard
 breaks.
 
@@ -271,6 +275,11 @@ against the facts (for example, total revenue matches fact_orders).
 ---
 
 ## 9. Personal data is unmasked
+
+**Status: done (Step 9 in PROJECT_STEPS.txt).** mask_pii macro, masked
+dim_customer, raw values in restricted.dim_customer_pii, PII tags, and tests
+that fail if raw personal data reaches Gold. The rest of this section is the
+original analysis.
 
 **Today:** email, phone and street address sit unmasked in bronze, silver
 and dim_customer.
