@@ -1,5 +1,7 @@
 -- Silver: orders joined to the customer and product versions that were
 -- valid when the order was placed (point-in-time join on SCD2 history).
+-- A full table: a customer or product change can move an old order to
+-- another version, so every order is re-joined on each run (it's cheap).
 
 with orders as (
 
@@ -22,7 +24,7 @@ products as (
 )
 
 select
-    orders.*,
+    orders.* exclude (_max_ingested_at),
 
     customers.customer_sk,
     customers.customer_segment          as customer_segment_at_order,
@@ -31,7 +33,12 @@ select
 
     products.product_sk,
     products.category                   as product_category_at_order,
-    products.unit_price                 as list_price_at_order
+    products.unit_price                 as list_price_at_order,
+
+    -- Newest ingestion behind this row (order, customer or product history);
+    -- the incremental Gold facts use it to find the orders to recompute
+    greatest(orders._max_ingested_at, customers._max_ingested_at, products._max_ingested_at)
+                                        as _max_ingested_at
 
 from orders
 left join customers

@@ -14,7 +14,7 @@ solution, and alternatives that were considered.
 | #  | Gap                                    | Impact | Effort | Priority |
 |----|----------------------------------------|--------|--------|----------|
 | 1  | No persistent raw layer (done)         | High   | Small  | 1        |
-| 2  | Full rebuild on every run              | High   | Medium | 2        |
+| 2  | Full rebuild on every run (done)       | High   | Medium | 2        |
 | 3  | No orchestration (done)                | High   | Medium | 3        |
 | 4  | One environment, CI rebuilds all       | Medium | Small  | 4        |
 | 5  | No schema contracts on Gold (done)     | Medium | Small  | 5        |
@@ -77,6 +77,15 @@ into raw tables in DuckDB, with a load log so loads can't be applied twice.
 ---
 
 ## 2. Full rebuild on every run
+
+**Status: done (Step 10 in PROJECT_STEPS.txt),** with two differences from
+the plan below. Change detection uses ingestion watermarks from the raw
+layer instead of a look-back on _loaded_at, so it is exact for Bronze and
+Silver; the look-back applies only to the Gold facts. Dimensions, the
+monthly MRR snapshot, int_orders_enriched and int_customer_tier_history stay
+full tables. A CI check proves incremental equals a full refresh. Not done:
+the weekly scheduled full refresh (step 5). The rest of this section is the
+original analysis.
 
 **Today:** every Silver and Gold table is rebuilt from all history on each
 `dbt build`. That's fine for 18k rows, but run time grows with history, not

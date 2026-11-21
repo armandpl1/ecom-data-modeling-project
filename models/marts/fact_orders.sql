@@ -5,10 +5,27 @@
 -- orders would fit without a redesign.
 -- Each row reflects the order's latest known state. Dimension keys point to
 -- the customer and product versions valid when the order was placed.
+--
+-- Incremental: recomputes orders whose order, customer or product history
+-- was ingested in the latest load round or var('incremental_lookback_hours')
+-- before it (macros/incremental_window_start.sql; delete+insert on order_id).
+-- A run that misses more than the look-back needs `dbt build --full-refresh`
+-- (run one weekly as a safety net).
+
+{{ config(
+    materialized='incremental',
+    unique_key='order_id',
+    incremental_strategy='delete+insert',
+    on_schema_change='fail',
+    post_hook="delete from {{ this }} where order_id not in (select order_id from {{ ref('int_orders') }})"
+) }}
 
 with orders as (
 
     select * from {{ ref('int_orders_enriched') }}
+    {% if is_incremental() %}
+    where _max_ingested_at >= {{ incremental_window_start() }}
+    {% endif %}
 
 )
 

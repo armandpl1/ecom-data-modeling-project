@@ -15,6 +15,19 @@
 --   no_mrr_change cancellation of a subscription that was not paying
 --                 (a trial or a paused subscription)
 
+-- Incremental: recomputes every event of a subscription whose history, or
+-- whose customer's history, was ingested in the latest load round or
+-- var('incremental_lookback_hours') before it
+-- (macros/incremental_window_start.sql; delete+insert on subscription_id, so
+-- events that no longer exist are removed too).
+
+{{ config(
+    materialized='incremental',
+    unique_key='subscription_id',
+    incremental_strategy='delete+insert',
+    on_schema_change='fail'
+) }}
+
 with versions as (
 
     select
@@ -24,6 +37,18 @@ with versions as (
             else 0
         end as paying_mrr
     from {{ ref('int_subscriptions_history') }}
+    {% if is_incremental() %}
+    {% set lookback_start = incremental_window_start() %}
+    -- Whole subscriptions only, so the window functions below see full timelines
+    where subscription_id in (
+        select subscription_id from {{ ref('int_subscriptions_history') }}
+        where _max_ingested_at >= {{ lookback_start }}
+           or customer_id in (
+               select customer_id from {{ ref('int_customers_history') }}
+               where _max_ingested_at >= {{ lookback_start }}
+           )
+    )
+    {% endif %}
 
 ),
 
