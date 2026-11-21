@@ -294,6 +294,30 @@ than a full refresh (74.7 s vs 45.6 s on a laptop).
 
 ---
 
+## Step 11: Service levels, runbooks and incidents ✅
+
+**Goal:** know when the pipeline is unhealthy, and know what to do about it
+(gap 10 in IMPROVEMENTS.txt).
+
+1. `ops/slos.yml`: four objectives (raw freshness, batch volume, Bronze
+   caught up with raw, dbt tests), each with its runbook.
+2. `scripts/check_slos.py` (`make check-slos`, in CI after `dbt build`):
+   met or breached per table, a readable table and a JSON report, exit 1 on
+   a breach. Freshness is measured against the latest load by default,
+   because the sample data is static.
+3. The `service_levels` Dagster asset runs the check after `dbt build`; a
+   breach fails the run and `alert_on_failure` posts it with the runbooks.
+4. `docs/runbooks/`: one runbook per alert, including the quarantine
+   procedure for a bad batch.
+5. `docs/postmortems/2026-11-21-truncated-orders-extract.md`: a reproduced
+   incident (an orders extract with 10% of its rows). dbt tests passed; the
+   volume check caught it; fixed and verified in about 3 minutes.
+
+**Check:** `make build` then `make check-slos`: 0 objectives breached. Load a
+truncated extract, `dbt build`, `make check-slos`: `batch_volume` breached.
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in

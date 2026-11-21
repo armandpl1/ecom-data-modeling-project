@@ -22,7 +22,7 @@ solution, and alternatives that were considered.
 | 7  | No metrics layer or consumers          | Medium | Medium | 7        |
 | 8  | No reporting marts                     | Medium | Medium | 8        |
 | 9  | Personal data is unmasked (done)       | Medium | Small  | 9        |
-| 10 | No monitoring or alerting              | Medium | Medium | 10       |
+| 10 | No monitoring or alerting (done)       | Medium | Medium | 10       |
 | 11 | SQL is not linted                      | Low    | Small  | 11       |
 | 12 | SQL is tied to DuckDB                  | Low    | Medium | 12       |
 | 13 | Single-product orders only             | Low    | Small  | 13       |
@@ -309,6 +309,14 @@ default.
 ---
 
 ## 10. No monitoring or alerting
+
+**Status: done (Step 11 in PROJECT_STEPS.txt), with a different design than
+below.** Service-level objectives in ops/slos.yml checked by
+scripts/check_slos.py, in CI and as a Dagster asset that alerts on breach;
+a batch-volume check against the previous batches (instead of a dbt generic
+test); runbooks and a postmortem. Not done: run duration and rows-per-model
+history (point 4), and wall-clock freshness on the static sample data. The
+rest of this section is the original analysis.
 
 **Today:** tests catch broken rules, but not a sudden drop in volume (for
 example, a load with half the usual orders). Freshness is configured but

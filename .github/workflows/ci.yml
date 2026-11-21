@@ -126,6 +126,13 @@ jobs:
       - name: Build models and run all data and unit tests
         run: uv run dbt build
 
+      - name: Check the service-level objectives (ops/slos.yml)
+        # Freshness is measured against the latest load (the sample data is
+        # static); fails on any breach, and every breach names its runbook.
+        run: |
+          mkdir -p target
+          uv run python scripts/check_slos.py --json target/slo_report.json
+
       - name: Check incremental runs match a full refresh
         # Two simulated nightly loads, built incrementally and as a full
         # refresh into separate warehouses: every Gold table must be identical
@@ -147,6 +154,7 @@ jobs:
           name: dbt-artifacts
           path: |
             target/run_results.json
+            target/slo_report.json
             target/manifest.json
             target/catalog.json
             logs/dbt.log

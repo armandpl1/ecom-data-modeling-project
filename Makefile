@@ -4,7 +4,7 @@
 export UV_PROJECT_ENVIRONMENT := deenv
 RUN := uv run
 
-.PHONY: help install hooks lint test data load build check-incremental pipeline orchestrate docs ci clean
+.PHONY: help install hooks lint test data load build check-slos check-incremental pipeline orchestrate docs ci clean
 
 help:  ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -31,6 +31,9 @@ load: data  ## Append the raw CSVs to the raw layer in ecom.duckdb (reruns are s
 build: load  ## Build all dbt models and run all dbt tests
 	$(RUN) dbt parse
 	$(RUN) dbt build
+
+check-slos:  ## Check the service-level objectives (ops/slos.yml); each breach names its runbook
+	$(RUN) python scripts/check_slos.py
 
 check-incremental:  ## Prove incremental runs give the same Gold tables as a full refresh
 	$(RUN) python scripts/check_incremental.py

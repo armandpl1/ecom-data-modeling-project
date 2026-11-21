@@ -666,6 +666,7 @@ dependencies = [
     { name = "dbt-duckdb" },
     { name = "duckdb" },
     { name = "faker" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -686,6 +687,7 @@ requires-dist = [
     { name = "dbt-duckdb", specifier = ">=1.11.1" },
     { name = "duckdb", specifier = ">=2.0.0" },
     { name = "faker", specifier = ">=40.44.0" },
+    { name = "pyyaml", specifier = ">=6" },
 ]
 
 [package.metadata.requires-dev]
