@@ -5,6 +5,7 @@ description = "Data modeling project for a fictional e-commerce business, built 
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "confluent-kafka>=2.16.2",
     "dagster>=1.13.31",
     "dagster-dbt>=0.29.31",
     "dbt-core>=1.12.6",
@@ -12,6 +13,7 @@ dependencies = [
     "dbt-metricflow>=0.16.0",
     "duckdb>=2.0.0",
     "faker>=40.44.0",
+    "psycopg[binary]>=3.3.9",
     "pyyaml>=6",
 ]
 

@@ -340,6 +340,28 @@ in IMPROVEMENTS.txt).
 
 ---
 
+## Step 13: Change data capture ✅
+
+**Goal:** stream changes from a source database into the raw layer, instead of
+nightly files.
+
+1. `cdc/docker-compose.yml`: PostgreSQL 16.6 (logical replication), Redpanda
+   v24.2.18 and Debezium Server 2.7.3, memory-capped. `make cdc-up` / `cdc-down`.
+2. `scripts/cdc_source.py`: replays the generator's history into typed
+   Postgres tables as real inserts, updates and deletes (`make cdc-replay`).
+3. `scripts/cdc_consumer.py`: maps Debezium events to the raw columns and
+   appends one batch per table per run; offsets are stored in the same DuckDB
+   transaction as the rows, so loading is exactly once (`make cdc-load`).
+4. `scripts/cdc_lag.py`: measures commit-to-raw lag.
+5. `batch_volume` in `scripts/check_slos.py` now compares file extracts only.
+6. Tests: event mapping, the dropped delete touch, crash before commit,
+   tombstone-only batches, replay order and SQL; 2 new SLO tests.
+
+**Check:** `make cdc-up cdc-replay cdc-load`, then `dbt build`: PASS=176,
+WARN=1. Raw rows = 21,234 = the number of changes. Gold matches the CSV path.
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in

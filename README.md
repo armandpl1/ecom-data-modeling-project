@@ -269,6 +269,83 @@ Checked: retyping `dim_customer.customer_id` to an integer fails the build
 with "This model has an enforced contract that failed". A breaking change to
 Gold now has to be a deliberate YAML change, visible in review.
 
+## Change data capture
+
+The CSV path receives nightly extract files. The CDC path streams every
+change from the source database instead, and lands it in the same raw layer,
+so everything downstream (Bronze to Gold, Dagster, service levels, metrics)
+works unchanged.
+
+```text
+PostgreSQL  ->  Debezium Server  ->  Redpanda (Kafka API)  ->  scripts/cdc_consumer.py  ->  raw.<table>
+(source DB)     (reads the WAL)      ecom.public.<table>        (exactly once)              + raw._load_log
+```
+
+```bash
+make cdc-up        # Postgres 16.6, Redpanda v24.2.18, Debezium Server 2.7.3 (Docker)
+make cdc-replay    # replay the change history into Postgres (UNTIL=2025-06-30 to stop early)
+make cdc-load      # load new change events into raw.* (safe to rerun)
+make build         # dbt as usual (skip its generate/load steps: `dbt build`)
+make cdc-down      # stop the stack and delete its data
+```
+
+**Source system.** `cdc/postgres/init.sql` holds typed tables (numeric,
+timestamp, date, boolean). `scripts/cdc_source.py` replays the generator's
+history as real `INSERT`, `UPDATE` and `DELETE` statements, one transaction
+each, in source time order, so Debezium sees genuine changes:
+
+- Re-delivered rows are dropped: a database changes once; only extracts repeat.
+- A delete first sets `updated_at` to the delete time, then deletes, in one
+  transaction, so the delete event carries the delete time.
+- 4 orders have updates but no insert in the history (their insert landed
+  after the extract cutoff). The replay inserts the full row when an update
+  finds none, as the real database would have had the order.
+
+**Consumer.** `scripts/cdc_consumer.py` maps each event to the CSV columns
+and text format (`c`/`r` -> `I`, `u` -> `U`, `d` -> `D` from the `before`
+image; tombstones skipped; the touch-update before a delete dropped).
+`_loaded_at` is the source commit time in UTC, so the later commit wins in
+Bronze, as the later load does for files. Each run appends at most one batch
+per table, recorded in `raw._load_log` with a `cdc://topic/partition:range`
+name, and stores each partition's next offset in `raw._cdc_offsets` in the
+**same DuckDB transaction** as the rows: a crash leaves neither, so nothing is
+lost or loaded twice.
+
+**Measured** (default data, this laptop, stack capped at 1.6 GB):
+
+| Check                         | Result                                                                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Replay into Postgres          | 21,234 changes in 15.8 s (about 1,340 per second)                                                                      |
+| Consumer catch-up             | 23,266 events -> 21,234 raw rows (one per change) in 4.5 s                                                             |
+| Crash safety                  | killed (`kill -9`) 4 times mid-run, then caught up: 0 rows missing, 0 extra, offsets identical                         |
+| Lag, commit -> raw (1 s poll) | 200 changes at 10/s: p50 1.58 s, p95 2.49 s, max 3.44 s                                                                |
+| Lag at 50 changes/s           | 500 changes: p50 1.37 s, p95 2.54 s, max 3.08 s                                                                        |
+| `dbt build` on CDC data       | PASS=176, WARN=1 (the known `delivered_orders_have_ship_event`), ERROR=0                                               |
+| Gold vs the CSV path          | all 6 Gold tables identical                                                                                            |
+| End to end                    | an email change became `dim_customer` version 4 with the new hash; a delete ended the customer (`is_deleted_customer`) |
+| Peak container memory         | about 500 MiB in total during the replay (Debezium 313, Redpanda 149, Postgres 36)                                     |
+
+**The one difference from the CSV path is a CSV quirk.** In
+`restricted.dim_customer_pii`, one version of customer C00637 has first name
+`Shwan` from the CSV path and `Shawn` from CDC. In the extracts, the typo was
+corrected the next night, then the original typo row was re-delivered two
+days later, and "latest load wins" restored it. CDC sees each change once, so
+the correction stands. Gold shows initials only, so Gold is identical.
+
+Notes:
+
+- **Service levels:** `batch_volume` compares file extracts only. A CDC batch
+  is as big as whatever changed since the last poll, so a CDC-fed table is
+  reported as a stream; freshness and lag still apply.
+- **Not in CI:** the stack needs about 2.5 GB of images (Debezium Server alone
+  is 1.53 GB). CI runs the CDC unit tests (event mapping, exactly-once
+  batches, the replay), not the live stack.
+- **Not orchestrated yet:** Dagster still runs the file path. A CDC sensor is
+  the natural next step.
+- **Lag:** measure it with `scripts/cdc_lag.py` while the consumer runs with
+  `--follow` (see the script's docstring). About 1 s of the lag is the poll
+  interval.
+
 ## The raw data
 
 Each file is an append-only extract, as if copied nightly from the source system. Every change to a record is a **new row**; nothing is edited in place. To get the current state of a record you have to pick its latest version.
@@ -795,6 +872,7 @@ make pipeline  # the same, orchestrated by Dagster
 make check-incremental  # incremental runs vs a full refresh: Gold must be identical
 make check-slos         # service-level objectives; each breach names its runbook
 make metrics            # validate the semantic layer and export dashboard datasets
+make cdc-up             # CDC stack: Postgres, Debezium Server, Redpanda (then cdc-replay, cdc-load)
 make dashboard          # build the Evidence dashboard (needs Node.js)
 make ci        # everything CI runs
 ```
@@ -897,6 +975,10 @@ ops/slos.yml                   service-level objectives and their runbooks
 docs/runbooks/                 one runbook per alert
 docs/postmortems/              incident write-ups
 scripts/export_metrics.py      runs mf query for each dashboard dataset, writes CSVs
+scripts/cdc_source.py          replays the change history into the CDC source Postgres
+scripts/cdc_consumer.py        loads Debezium events from Redpanda into raw.*, exactly once
+scripts/cdc_lag.py             measures commit-to-raw lag
+cdc/                           Docker Compose stack, Postgres schema, Debezium Server config
 models/semantic/               semantic models, metrics and the dashboard exposure
 dashboard/                     Evidence dashboard over the semantic-layer metrics
 scripts/raw_data/              generator logic: history (CDC mechanics), one module per table, CSV writer

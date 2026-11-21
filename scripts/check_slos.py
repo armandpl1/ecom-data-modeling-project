@@ -104,15 +104,35 @@ def check_batch_volume(con, cfg: dict) -> list[Result]:
     ratio_limit = cfg["min_ratio"]
     results = []
     for table in TABLES:
+        # Only file extracts: CDC batches (file_name cdc://...) are as big as
+        # whatever changed since the last poll, so a small one is normal. A
+        # CDC-fed table is watched through freshness and lag instead.
         counts = [
             r[0]
             for r in con.execute(
                 "select row_count from raw._load_log where table_name = ? "
-                "order by loaded_at, batch_id",
+                "and file_name not like 'cdc://%' order by loaded_at, batch_id",
                 [table],
             ).fetchall()
         ]
         target = f">= {ratio_limit:.0%} of previous average, > 0"
+        cdc_batches = con.execute(
+            "select count(*) from raw._load_log where table_name = ? "
+            "and file_name like 'cdc://%'",
+            [table],
+        ).fetchone()[0]
+        if not counts and cdc_batches:
+            results.append(
+                Result(
+                    "batch_volume",
+                    table,
+                    True,
+                    f"CDC stream ({cdc_batches} batches), volume not checked",
+                    target,
+                    cfg["runbook"],
+                )
+            )
+            continue
         if not counts:
             results.append(
                 Result(

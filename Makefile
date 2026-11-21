@@ -4,7 +4,7 @@
 export UV_PROJECT_ENVIRONMENT := deenv
 RUN := uv run
 
-.PHONY: help install hooks lint test data load build check-slos check-incremental pipeline orchestrate docs ci clean metrics dashboard dashboard-dev
+.PHONY: help install hooks lint test data load build check-slos check-incremental pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag
 
 help:  ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -51,6 +51,22 @@ dashboard: metrics  ## Build the Evidence dashboard into dashboard/build (needs 
 
 dashboard-dev:  ## Serve the dashboard locally with live reload
 	$(NPM) run dev
+
+CDC := docker compose -f cdc/docker-compose.yml
+cdc-up:  ## Start the CDC stack: Postgres, Redpanda, Debezium Server (waits until healthy)
+	$(CDC) up -d --wait
+
+cdc-down:  ## Stop the CDC stack and delete its data
+	$(CDC) down -v
+
+cdc-replay:  ## Replay the change history into the CDC source Postgres (UNTIL=YYYY-MM-DD to stop early)
+	$(RUN) python scripts/cdc_source.py replay $(if $(UNTIL),--until $(UNTIL))
+
+cdc-load:  ## Load new change events from Redpanda into the raw layer (exactly once)
+	$(RUN) python scripts/cdc_consumer.py
+
+cdc-lag:  ## Measure commit-to-raw lag (run the consumer with --follow meanwhile; DB=path)
+	$(RUN) python scripts/cdc_lag.py --database $(or $(DB),ecom.duckdb)
 
 check-incremental:  ## Prove incremental runs give the same Gold tables as a full refresh
 	$(RUN) python scripts/check_incremental.py
