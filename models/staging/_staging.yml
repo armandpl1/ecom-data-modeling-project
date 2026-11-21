@@ -20,9 +20,11 @@ models:
         data_tests: [not_null]
       - name: email
         description: Lowercased and trimmed.
+        meta: {pii: true}
         data_tests: [not_null]
       - name: phone_number
         description: 10-digit US number without country code. Null when missing in the source (~5%).
+        meta: {pii: true}
       - name: customer_segment
         data_tests:
           - accepted_values:

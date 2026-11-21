@@ -114,6 +114,41 @@ extract is already in the load log. CI runs the pipeline end to end after the
 plain `dbt build`. Dagster creates its local run database on first use, which
 took about 4 minutes on a slow laptop disk; later runs reuse it.
 
+## Personal data and contracts
+
+**Gold exposes no raw personal data.** `dim_customer` shows masked values,
+built by the `mask_pii` macro:
+
+| Column         | Instead of               | Masked value                                             |
+| -------------- | ------------------------ | -------------------------------------------------------- |
+| `initials`     | first and last name      | "J. S."                                                  |
+| `email_hash`   | email                    | SHA-256 of the cleaned email: still joins, can't be read |
+| `email_domain` | email                    | the part after @                                         |
+| `phone_last4`  | phone number, extension  | last 4 digits                                            |
+| `zip3`         | street address, ZIP code | first 3 ZIP digits (an area, not an address)             |
+
+The raw values are in `restricted.dim_customer_pii`, one row per
+`dim_customer` version, joined on `customer_sk`. It sits in its own schema
+so access can be granted separately; DuckDB has no roles, so on Snowflake or
+BigQuery you'd use roles or column masking policies instead. Personal-data
+columns are tagged `meta: {pii: true}` in the YAML, so the docs site shows
+them.
+
+Two tests guard it:
+
+- `assert_no_raw_pii_in_gold` reads the warehouse's own column list and fails
+  if any Gold table has a raw personal-data column (checked: adding a Gold
+  table with an `email` column fails the build).
+- `assert_dim_customer_pii_is_masked` fails if a masked column holds anything
+  but a masked value (a 64-character hash, 4 digits, a domain, 3 ZIP digits).
+
+**Gold models have enforced contracts.** Every Gold column (158 across 6
+tables) declares its data type, and `contract: {enforced: true}` makes dbt
+refuse to build a Gold table whose columns or types differ from the YAML.
+Checked: retyping `dim_customer.customer_id` to an integer fails the build
+with "This model has an enforced contract that failed". A breaking change to
+Gold now has to be a deliberate YAML change, visible in review.
+
 ## The raw data
 
 Each file is an append-only extract, as if copied nightly from the source system. Every change to a record is a **new row**; nothing is edited in place. To get the current state of a record you have to pick its latest version.
@@ -479,14 +514,14 @@ To track another column in the history, add it to `tracked_columns` in the model
 
 ### Gold (`models/marts`)
 
-| Model                           | Grain                      | Main columns                                                                                                                                                                                                     |
-| ------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dim_customer`                  | customer version           | `customer_sk`, `customer_id`, `full_name`, contact and address, `customer_segment`, `subscription_tier`, `valid_from_timestamp`, `valid_to_timestamp`, `is_current`, `is_deleted_customer`                       |
-| `dim_product`                   | product version            | `product_sk`, `product_id`, `sku`, name parts, `category`, `unit_price`, `price_band`, `launch_date`, `discontinued_at`, validity columns                                                                        |
-| `dim_date`                      | day                        | Calendar, fiscal, holiday, retail-event and rolling-window columns. See [`dim_date`](#dim_date).                                                                                                                 |
-| `fact_orders`                   | order line                 | Dimension keys (customer, product, order/ship/delivery date), `quantity`, `gross_revenue`, `discount_amount`, `net_revenue`, `cancelled_revenue`, `returned_revenue`, `recognized_revenue`, lifecycle timestamps |
-| `fact_subscriptions`            | MRR movement / churn event | `customer_sk`, `event_date_key`, `movement_type`, `mrr_change`, `mrr_gained`, `mrr_lost`, `churned_subscriptions`, `churn_type`                                                                                  |
-| `fact_subscription_mrr_monthly` | subscription × month       | `month_start`, `customer_sk`, plan, status, `mrr`, `is_paying`. Cancelled subscriptions appear up to their cancellation month.                                                                                   |
+| Model                           | Grain                      | Main columns                                                                                                                                                                                                               |
+| ------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dim_customer`                  | customer version           | `customer_sk`, `customer_id`, masked contact (`initials`, `email_hash`, `phone_last4`, `zip3`), `customer_segment`, `subscription_tier`, `valid_from_timestamp`, `valid_to_timestamp`, `is_current`, `is_deleted_customer` |
+| `dim_product`                   | product version            | `product_sk`, `product_id`, `sku`, name parts, `category`, `unit_price`, `price_band`, `launch_date`, `discontinued_at`, validity columns                                                                                  |
+| `dim_date`                      | day                        | Calendar, fiscal, holiday, retail-event and rolling-window columns. See [`dim_date`](#dim_date).                                                                                                                           |
+| `fact_orders`                   | order line                 | Dimension keys (customer, product, order/ship/delivery date), `quantity`, `gross_revenue`, `discount_amount`, `net_revenue`, `cancelled_revenue`, `returned_revenue`, `recognized_revenue`, lifecycle timestamps           |
+| `fact_subscriptions`            | MRR movement / churn event | `customer_sk`, `event_date_key`, `movement_type`, `mrr_change`, `mrr_gained`, `mrr_lost`, `churned_subscriptions`, `churn_type`                                                                                            |
+| `fact_subscription_mrr_monthly` | subscription × month       | `month_start`, `customer_sk`, plan, status, `mrr`, `is_paying`. Cancelled subscriptions appear up to their cancellation month.                                                                                             |
 
 ## Testing and documentation
 
@@ -608,12 +643,12 @@ lint ──┐
 test ──┘
 ```
 
-| Job           | Runs                                                                                     | Blocks         |
-| ------------- | ---------------------------------------------------------------------------------------- | -------------- |
-| `lint`        | `uv lock --check`, then every pre-commit hook: ruff, black, flake8, file hygiene         | `dbt`          |
-| `test`        | `pytest` for the data generator; JUnit report uploaded                                   | `dbt`          |
-| `dbt`         | Generate data, `dbt parse`, `dbt build` (all models, data and unit tests), docs site     | `deploy-docs`  |
-| `deploy-docs` | Publishes the dbt docs site to GitHub Pages. Only on `main`, only after every job passes | (deploys)      |
+| Job           | Runs                                                                                                                                      | Blocks        |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `lint`        | `uv lock --check`, then every pre-commit hook: ruff, black, flake8, file hygiene                                                          | `dbt`         |
+| `test`        | `pytest` for the data generator; JUnit report uploaded                                                                                    | `dbt`         |
+| `dbt`         | Generate data, load the raw layer, `dbt parse`, `dbt build` (all models, data and unit tests), the Dagster pipeline end to end, docs site | `deploy-docs` |
+| `deploy-docs` | Publishes the dbt docs site to GitHub Pages. Only on `main`, only after every job passes                                                  | (deploys)     |
 
 Production practices in the pipeline:
 
@@ -706,7 +741,7 @@ order by month_start;
 A customer's full change history:
 
 ```sql
-select version_number, email, state, customer_segment, subscription_tier,
+select version_number, email_hash, state, customer_segment, subscription_tier,
        valid_from_timestamp, valid_to_timestamp, is_current
 from gold.dim_customer
 where customer_id = 'C00063'
