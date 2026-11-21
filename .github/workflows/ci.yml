@@ -126,6 +126,11 @@ jobs:
       - name: Build models and run all data and unit tests
         run: uv run dbt build
 
+      - name: Validate the semantic layer and export its metrics
+        # MetricFlow checks every semantic model and metric against the built
+        # warehouse, then the dashboard's datasets are exported as CSV.
+        run: make metrics
+
       - name: Check incremental runs match a full refresh
         # Two simulated nightly loads, built incrementally and as a full
         # refresh into separate warehouses: every Gold table must be identical
@@ -148,6 +153,7 @@ jobs:
           path: |
             target/run_results.json
             target/manifest.json
+            dashboard/sources/metrics/*.csv
             target/catalog.json
             logs/dbt.log
           if-no-files-found: warn

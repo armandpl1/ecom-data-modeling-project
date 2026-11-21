@@ -294,6 +294,28 @@ than a full refresh (74.7 s vs 45.6 s on a laptop).
 
 ---
 
+## Step 12: Semantic layer and dashboard ✅
+
+**Goal:** define business metrics once and serve them to a dashboard (gap 7
+in IMPROVEMENTS.txt).
+
+1. MetricFlow semantic models on fact_orders, fact_subscriptions and
+   fact_subscription_mrr_monthly (`models/semantic/`), with dim_date as the
+   time spine. dbt-metricflow 0.16.0 works with dbt-core 1.12.7.
+2. Metrics: recognized revenue, orders, average order value, MRR, paying
+   subscriptions, net new MRR, churned subscriptions, churn rate (against the
+   start of the month), trial conversions and trial conversion rate.
+3. `scripts/export_metrics.py` (`make metrics`, in CI): `mf validate-configs`,
+   then `mf query` per dataset to CSV.
+4. `dashboard/`: Evidence (npm packages) reads the CSVs; `make dashboard`
+   builds a static site. The dashboard is a dbt exposure.
+
+**Check:** `make metrics` reports 0 validation errors and writes 34, 34 and
+12 rows. `uv run mf query --metrics mrr --group-by metric_time__month` gives
+4,162 for 2026-10. `make dashboard` builds; the page shows MRR $4,162.
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in

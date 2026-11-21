@@ -211,7 +211,10 @@ models:
     description: >
       Calendar, one row per day (range set by the date_spine_* vars). Includes
       fiscal attributes (fiscal_year_start_month var), US federal holidays,
-      retail events, and rolling-window flags relative to as_of_date.
+      retail events, and rolling-window flags relative to as_of_date. Also the
+      time spine for the semantic layer (models/semantic/).
+    time_spine:
+      standard_granularity_column: date_day
     columns:
       - name: date_key
         data_type: integer
@@ -219,6 +222,7 @@ models:
         data_tests: [unique, not_null]
       - name: date_day
         data_type: date
+        granularity: day
         description: 'The calendar date.'
         data_tests: [unique, not_null]
       - name: fiscal_year

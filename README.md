@@ -154,6 +154,56 @@ slow disk it took 74.7 s against 45.6 s for a full refresh of both batches,
 because the per-entity bookkeeping costs more than rebuilding 21k rows. The
 work it skips grows with history, so the gain appears at real volumes.
 
+## Semantic layer and dashboard
+
+**Metrics are defined once**, in the dbt semantic layer (MetricFlow,
+`models/semantic/`), on the Gold facts, with `dim_date` as the time spine:
+
+| Metric                  | Definition                                                              |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `recognized_revenue`    | Revenue kept after cancellations and returns                            |
+| `orders`                | Distinct orders                                                         |
+| `average_order_value`   | Recognized revenue / orders                                             |
+| `mrr`                   | MRR at the end of the period (a snapshot: never summed across months)   |
+| `paying_subscriptions`  | Subscriptions paying at the end of the period                           |
+| `net_new_mrr`           | Sum of MRR movements: new, expansion, contraction, pause, resume, churn |
+| `churned_subscriptions` | Subscriptions that churned                                              |
+| `churn_rate`            | Churned in the month / paying at the start of the month                 |
+| `trial_conversion_rate` | Trials that became active / trials that ended (converted or cancelled)  |
+
+```bash
+uv run mf query --metrics mrr,net_new_mrr,churn_rate --group-by metric_time__month
+```
+
+Measured (October 2026, default data): MRR 4,162; net new MRR 48.47; churn
+rate 7.6% (12 churned / 158 paying at the start of the month), each checked
+against plain SQL on the Gold tables. Trial conversion overall: 72.4% (152 of
+210 trials).
+
+**Dashboard:** an [Evidence](https://evidence.dev) project in `dashboard/`
+(MRR, net new MRR, churn, revenue, average order value, trial conversion).
+`scripts/export_metrics.py` runs `mf query` for each dataset and writes CSVs
+that Evidence reads, so the dashboard has no SQL definitions of its own. It
+doesn't read `ecom.duckdb` directly because Evidence's DuckDB connector
+bundles DuckDB 1.4, which can't open this DuckDB 2.0 file ("version number
+999, but we can only read versions between 64 and 67"). It is declared as a
+dbt exposure, `metrics_dashboard`, so it appears at the end of the lineage
+graph.
+
+```bash
+make metrics         # validate the semantic layer, export the dashboard datasets (CI runs this)
+make dashboard       # build the static site into dashboard/build (needs Node.js 18+)
+make dashboard-dev   # live preview at http://localhost:3000
+```
+
+The dashboard needs Node.js. Without system access it can live in your home
+folder: download the Linux x64 tarball from https://nodejs.org (check its
+SHA256 against `SHASUMS256.txt`) and extract it to `~/.local/opt/`; the
+Makefile finds it there. It uses the open-source npm packages
+(`@evidence-dev/evidence` 40.1.8); Evidence's newer hosted "Studio" CLI isn't
+needed. `make dashboard` took 1 min 54 s on a laptop, and `dashboard/build/`
+was 87 MB.
+
 ## Personal data and contracts
 
 **Gold exposes no raw personal data.** `dim_customer` shows masked values,
@@ -713,6 +763,8 @@ make test      # unit tests
 make build     # generate data, load the raw layer, dbt parse, dbt build
 make pipeline  # the same, orchestrated by Dagster
 make check-incremental  # incremental runs vs a full refresh: Gold must be identical
+make metrics            # validate the semantic layer and export dashboard datasets
+make dashboard          # build the Evidence dashboard (needs Node.js)
 make ci        # everything CI runs
 ```
 
@@ -809,6 +861,9 @@ dbt docs generate && dbt docs serve   # browse model docs and lineage
 scripts/generate_raw_data.py   raw data generator (command line)
 scripts/load_raw.py            loads the extracts into the append-only raw layer, logged in raw._load_log
 scripts/orchestration/         Dagster assets, daily job, schedule and failure alerts
+scripts/export_metrics.py      runs mf query for each dashboard dataset, writes CSVs
+models/semantic/               semantic models, metrics and the dashboard exposure
+dashboard/                     Evidence dashboard over the semantic-layer metrics
 scripts/raw_data/              generator logic: history (CDC mechanics), one module per table, CSV writer
 scripts/tests/                 Python tests for the generator, mirroring scripts/
 data/raw/                      generated CSVs (not committed)

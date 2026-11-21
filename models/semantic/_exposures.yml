@@ -1,0 +1,22 @@
+version: 2
+
+# Consumers of the Gold layer, shown at the end of the lineage graph.
+
+exposures:
+  - name: metrics_dashboard
+    label: E-commerce metrics dashboard
+    type: dashboard
+    maturity: medium
+    url: dashboard/pages/index.md
+    description: >
+      Evidence dashboard (dashboard/): MRR, net new MRR, churn rate, paying
+      subscriptions, recognized revenue, average order value and trial
+      conversion. Fed by scripts/export_metrics.py, which runs `mf query`
+      against the semantic layer in models/semantic/.
+    depends_on:
+      - ref('fact_orders')
+      - ref('fact_subscriptions')
+      - ref('fact_subscription_mrr_monthly')
+      - ref('dim_date')
+    owner:
+      name: Arman Najafian
