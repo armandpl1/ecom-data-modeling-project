@@ -126,6 +126,11 @@ jobs:
       - name: Build models and run all data and unit tests
         run: uv run dbt build
 
+      - name: Run the daily pipeline end to end with Dagster
+        # Same steps as above, orchestrated: generate, load (a rerun, so it must
+        # skip every extract), then dbt build with all tests as asset checks.
+        run: make pipeline
+
       - name: Generate docs site
         run: uv run dbt docs generate --static
 

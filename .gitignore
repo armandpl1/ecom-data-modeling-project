@@ -16,6 +16,9 @@ logs/
 *.duckdb.wal
 .user.yml
 
+# Dagster run history and logs (make pipeline / make orchestrate)
+.dagster/
+
 # CI outputs
 reports/
 site/

@@ -15,7 +15,7 @@ solution, and alternatives that were considered.
 |----|----------------------------------------|--------|--------|----------|
 | 1  | No persistent raw layer (done)         | High   | Small  | 1        |
 | 2  | Full rebuild on every run              | High   | Medium | 2        |
-| 3  | No orchestration or scheduling         | High   | Medium | 3        |
+| 3  | No orchestration (done)                | High   | Medium | 3        |
 | 4  | One environment, CI rebuilds all       | Medium | Small  | 4        |
 | 5  | No schema contracts on Gold            | Medium | Small  | 5        |
 | 6  | No unknown-member rows                 | Medium | Small  | 6        |
@@ -126,6 +126,12 @@ hardest part to get right.
 ---
 
 ## 3. No orchestration or scheduling
+
+**Status: done (Step 8 in PROJECT_STEPS.txt).** Dagster assets with dagster-dbt,
+a daily schedule and a failure sensor. Not done yet: `dbt source freshness`
+in the run (the sample data is static, so it would always fail) and a
+deployed Dagster instance (it runs locally). The rest of this section is the
+original analysis.
 
 **Today:** everything is run by hand. CI only runs on pull requests.
 
