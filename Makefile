@@ -4,7 +4,7 @@
 export UV_PROJECT_ENVIRONMENT := deenv
 RUN := uv run
 
-.PHONY: help install hooks lint test data load build check-incremental pipeline orchestrate docs ci clean
+.PHONY: help install hooks lint test data load build metrics dashboard dashboard-dev check-incremental pipeline orchestrate docs ci clean
 
 help:  ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -31,6 +31,23 @@ load: data  ## Append the raw CSVs to the raw layer in ecom.duckdb (reruns are s
 build: load  ## Build all dbt models and run all dbt tests
 	$(RUN) dbt parse
 	$(RUN) dbt build
+
+metrics:  ## Validate the semantic layer and export its metrics to dashboard/sources/metrics/
+	$(RUN) mf validate-configs
+	$(RUN) python scripts/export_metrics.py
+
+# Node.js for the dashboard: on PATH, or the newest user-space install in
+# ~/.local/opt/node-v*-linux-x64 (see README, "Semantic layer and dashboard")
+NODE_BIN ?= $(lastword $(sort $(wildcard $(HOME)/.local/opt/node-v*-linux-x64/bin)))
+NPM := PATH="$(NODE_BIN):$$PATH" npm --prefix dashboard
+
+dashboard: metrics  ## Build the Evidence dashboard into dashboard/build (needs Node.js 18+)
+	$(NPM) install --no-audit --no-fund
+	$(NPM) run sources
+	$(NPM) run build
+
+dashboard-dev:  ## Serve the dashboard locally with live reload
+	$(NPM) run dev
 
 check-incremental:  ## Prove incremental runs give the same Gold tables as a full refresh
 	$(RUN) python scripts/check_incremental.py

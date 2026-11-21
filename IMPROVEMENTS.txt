@@ -19,7 +19,7 @@ solution, and alternatives that were considered.
 | 4  | One environment, CI rebuilds all       | Medium | Small  | 4        |
 | 5  | No schema contracts on Gold (done)     | Medium | Small  | 5        |
 | 6  | No unknown-member rows                 | Medium | Small  | 6        |
-| 7  | No metrics layer or consumers          | Medium | Medium | 7        |
+| 7  | No metrics layer (done)                | Medium | Medium | 7        |
 | 8  | No reporting marts                     | Medium | Medium | 8        |
 | 9  | Personal data is unmasked (done)       | Medium | Small  | 9        |
 | 10 | No monitoring or alerting              | Medium | Medium | 10       |
@@ -241,6 +241,14 @@ fact), the build fails or the key is null.
 ---
 
 ## 7. No metrics layer or consumers
+
+**Status: done (Step 12 in PROJECT_STEPS.txt).** MetricFlow semantic layer
+with the metrics below, an Evidence dashboard fed by `mf query` exports, and
+a dbt exposure. Differences from the plan: dbt-metricflow has no [duckdb]
+extra (plain `dbt-metricflow`), and Evidence reads exported CSVs instead of
+ecom.duckdb because its DuckDB 1.4 can't open a DuckDB 2.0 file. Not done:
+publishing the dashboard to GitHub Pages (it builds locally). The rest of
+this section is the original analysis.
 
 **Today:** MRR, churn and recognized revenue are defined in SQL and
 documentation. Each new query has to re-implement them, and the lineage
