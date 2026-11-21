@@ -9,6 +9,7 @@ dependencies = [
     "dagster-dbt>=0.29.31",
     "dbt-core>=1.12.6",
     "dbt-duckdb>=1.11.1",
+    "dbt-metricflow>=0.16.0",
     "duckdb>=2.0.0",
     "faker>=40.44.0",
     "pyyaml>=6",

@@ -133,6 +133,11 @@ jobs:
           mkdir -p target
           uv run python scripts/check_slos.py --json target/slo_report.json
 
+      - name: Validate the semantic layer and export its metrics
+        # MetricFlow checks every semantic model and metric against the built
+        # warehouse, then the dashboard's datasets are exported as CSV.
+        run: make metrics
+
       - name: Check incremental runs match a full refresh
         # Two simulated nightly loads, built incrementally and as a full
         # refresh into separate warehouses: every Gold table must be identical
@@ -156,6 +161,7 @@ jobs:
             target/run_results.json
             target/slo_report.json
             target/manifest.json
+            dashboard/sources/metrics/*.csv
             target/catalog.json
             logs/dbt.log
           if-no-files-found: warn

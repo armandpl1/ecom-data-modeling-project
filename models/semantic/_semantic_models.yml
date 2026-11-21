@@ -1,0 +1,199 @@
+version: 2
+
+# Semantic layer (MetricFlow): business metrics defined once, on the Gold
+# facts. Query them with `mf query`, e.g.
+#   mf query --metrics mrr,net_new_mrr --group-by metric_time__month
+# The time spine is gold.dim_date (see time_spine in models/marts/_marts.yml).
+
+semantic_models:
+
+  - name: orders
+    description: One row per order line, from gold.fact_orders.
+    model: ref('fact_orders')
+    defaults:
+      agg_time_dimension: order_placed_at
+    entities:
+      - name: order_line
+        type: primary
+        expr: order_line_id
+      - name: order
+        type: foreign
+        expr: order_id
+      - name: customer
+        type: foreign
+        expr: customer_id
+    dimensions:
+      - name: order_placed_at
+        type: time
+        type_params:
+          time_granularity: day
+      - name: order_status
+        type: categorical
+      - name: payment_method
+        type: categorical
+    measures:
+      - name: recognized_revenue
+        description: Revenue kept after cancellations and returns (fact_orders.recognized_revenue).
+        agg: sum
+      - name: orders
+        description: Distinct orders.
+        agg: count_distinct
+        expr: order_id
+
+  - name: subscription_movements
+    description: One row per MRR movement or churn event, from gold.fact_subscriptions.
+    model: ref('fact_subscriptions')
+    defaults:
+      agg_time_dimension: event_at
+    entities:
+      - name: subscription_event
+        type: primary
+        expr: subscription_event_id
+      - name: subscription
+        type: foreign
+        expr: subscription_id
+    dimensions:
+      - name: event_at
+        type: time
+        type_params:
+          time_granularity: day
+      - name: movement_type
+        type: categorical
+      - name: billing_period
+        type: categorical
+    measures:
+      - name: mrr_change
+        description: Change in MRR from each movement (positive or negative).
+        agg: sum
+      - name: churned_subscriptions
+        description: Subscriptions that churned.
+        agg: sum
+      - name: trial_conversions
+        description: Trials that became active subscriptions.
+        agg: sum
+        expr: "case when status_before = 'trialing' and status_after = 'active' then 1 else 0 end"
+      - name: trial_endings
+        description: Trials that ended, converted or cancelled.
+        agg: sum
+        expr: "case when status_before = 'trialing' and status_after in ('active', 'cancelled') then 1 else 0 end"
+
+  - name: mrr_snapshot
+    description: One row per subscription per month, from gold.fact_subscription_mrr_monthly.
+    model: ref('fact_subscription_mrr_monthly')
+    defaults:
+      agg_time_dimension: month_start
+    entities:
+      - name: subscription_month
+        type: primary
+        expr: subscription_month_sk
+      - name: subscription
+        type: foreign
+        expr: subscription_id
+    dimensions:
+      - name: month_start
+        type: time
+        type_params:
+          time_granularity: month
+      - name: plan_name
+        type: categorical
+      - name: billing_period
+        type: categorical
+    measures:
+      # A snapshot: MRR adds up across subscriptions within a month, never
+      # across months, so over a longer period it takes the last month.
+      - name: mrr
+        description: Monthly recurring revenue at the month's snapshot.
+        agg: sum
+        non_additive_dimension:
+          name: month_start
+          window_choice: max
+      - name: paying_subscriptions
+        description: Subscriptions paying in the month's snapshot.
+        agg: sum
+        expr: "case when is_paying then 1 else 0 end"
+        non_additive_dimension:
+          name: month_start
+          window_choice: max
+
+metrics:
+
+  - name: recognized_revenue
+    label: Recognized revenue
+    description: Revenue kept after cancellations and returns.
+    type: simple
+    type_params:
+      measure: recognized_revenue
+
+  - name: orders
+    label: Orders
+    type: simple
+    type_params:
+      measure: orders
+
+  - name: average_order_value
+    label: Average order value
+    description: Recognized revenue per order.
+    type: ratio
+    type_params:
+      numerator: recognized_revenue
+      denominator: orders
+
+  - name: mrr
+    label: MRR
+    description: Monthly recurring revenue at the end of the period.
+    type: simple
+    type_params:
+      measure: mrr
+
+  - name: net_new_mrr
+    label: Net new MRR
+    description: MRR gained minus MRR lost from new, expansion, contraction, pause, resume and churn movements.
+    type: simple
+    type_params:
+      measure: mrr_change
+
+  - name: churned_subscriptions
+    label: Churned subscriptions
+    type: simple
+    type_params:
+      measure: churned_subscriptions
+
+  - name: paying_subscriptions
+    label: Paying subscriptions
+    type: simple
+    type_params:
+      measure: paying_subscriptions
+
+  - name: churn_rate
+    label: Churn rate
+    description: >
+      Subscriptions that churned in the month, divided by the subscriptions
+      paying at the start of the month (the previous month's snapshot).
+    type: derived
+    type_params:
+      expr: churned_subscriptions / nullif(paying_at_start, 0)
+      metrics:
+        - name: churned_subscriptions
+        - name: paying_subscriptions
+          offset_window: 1 month
+          alias: paying_at_start
+
+  - name: trial_conversions
+    label: Trial conversions
+    type: simple
+    type_params:
+      measure: trial_conversions
+
+  - name: trial_endings
+    label: Trials ended
+    type: simple
+    type_params:
+      measure: trial_endings
+
+  - name: trial_conversion_rate
+    label: Trial conversion rate
+    description: Share of trials that ended by converting to an active subscription.
+    type: ratio
+    type_params:
+      numerator: trial_conversions
+      denominator: trial_endings
