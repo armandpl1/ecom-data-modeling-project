@@ -19,10 +19,15 @@ vars:
   # Reference date for rolling-window flags in dim_date. Leave unset to use
   # the last order date in the data.
   as_of_date: null
+  # Incremental facts recompute rows whose inputs were ingested in the latest
+  # load round or this many hours before it. Covers late data and a few
+  # missed runs; beyond that, run `dbt build --full-refresh`.
+  incremental_lookback_hours: 72
 
 models:
   ecom:
     # Bronze: cleaned, typed, deduplicated copies of the raw extracts
+    # (incremental tables: each model sets materialized='incremental')
     staging:
       +schema: bronze
       +materialized: view

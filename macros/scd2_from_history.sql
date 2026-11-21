@@ -13,8 +13,12 @@
 
   A delete (_op = 'D') becomes a final tombstone version with
   is_deleted = true, which closes the version before it.
+
+  `where` (optional) limits the input to some entities, e.g. the ones that
+  changed since the last incremental run. Filter on unique_key only, so
+  each kept entity's whole history is rebuilt.
 -#}
-{% macro scd2_from_history(relation, unique_key, tracked_columns, surrogate_key) %}
+{% macro scd2_from_history(relation, unique_key, tracked_columns, surrogate_key, where=none) %}
 
 with history as (
 
@@ -27,6 +31,9 @@ with history as (
             cast(is_deleted as varchar)
         )) as _change_hash
     from {{ relation }}
+    {%- if where %}
+    where {{ where }}
+    {%- endif %}
 
 ),
 

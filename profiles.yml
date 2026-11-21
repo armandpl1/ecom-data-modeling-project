@@ -4,5 +4,7 @@ ecom:
   outputs:
     dev:
       type: duckdb
-      path: ecom.duckdb
+      # ECOM_DUCKDB_PATH lets scripts build into another file (e.g. the
+      # incremental-vs-full-refresh check); the default is ecom.duckdb.
+      path: "{{ env_var('ECOM_DUCKDB_PATH', 'ecom.duckdb') }}"
       threads: 4

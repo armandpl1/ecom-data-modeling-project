@@ -265,6 +265,35 @@ the build fails with a contract error.
 
 ---
 
+## Step 10: Incremental models ✅
+
+**Goal:** process only what changed on each run, and prove the result is the
+same as a full rebuild (gap 2 in IMPROVEMENTS.txt).
+
+1. Bronze (`stg_*`): incremental on the raw layer's `_ingested_at`; existing
+   rows for the same key and `updated_at` compete with new ones, so the row
+   loaded last still wins. `batch_id` and `ingested_at` are kept on each row.
+2. Silver SCD2 histories and `int_orders`: per-entity rebuild of entities
+   with Bronze rows newer than the table's `_max_ingested_at` watermark
+   (`scd2_from_history` gained an optional `where` filter).
+3. Gold `fact_orders` and `fact_subscriptions`: delete+insert per order and
+   per subscription for inputs ingested in the latest load round or
+   `incremental_lookback_hours` before it (`macros/incremental_window_start.sql`).
+4. `scripts/check_incremental.py` (`make check-incremental`, in CI): two
+   simulated nightly loads, incremental vs full refresh, every Gold and
+   restricted table compared. `ECOM_DUCKDB_PATH` in profiles.yml lets it
+   build into separate files.
+5. The two unit tests declare `is_incremental: false` (they test the full
+   computation).
+
+**Check:** `make check-incremental` prints `OK: 7 tables identical`.
+Measured: batch 2 read exactly its 2,070 raw rows, rebuilt 111 customers,
+4 products, 31 subscriptions and 792 orders in Silver, and a rerun with no
+new load read 0 rows. On this small dataset the incremental run is slower
+than a full refresh (74.7 s vs 45.6 s on a laptop).
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in

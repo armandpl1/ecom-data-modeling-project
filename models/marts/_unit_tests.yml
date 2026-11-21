@@ -13,6 +13,11 @@ unit_tests:
       MRR change; the past_due spell (still paying, same MRR) must not create
       an event.
     model: fact_subscriptions
+    overrides:
+      macros:
+        # The full-history path; incremental runs are checked by
+        # scripts/check_incremental.py
+        is_incremental: false
     given:
       - input: ref('int_subscriptions_history')
         rows:
@@ -46,6 +51,11 @@ unit_tests:
       delivered and returned. The roll-up must keep the corrected quantity,
       take the latest status, and record when each status was first reached.
     model: int_orders
+    overrides:
+      macros:
+        # The full-history path; incremental runs are checked by
+        # scripts/check_incremental.py
+        is_incremental: false
     given:
       - input: ref('stg_orders')
         rows:

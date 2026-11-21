@@ -1,9 +1,25 @@
+{{ config(
+    materialized='incremental',
+    unique_key='order_id',
+    incremental_strategy='delete+insert',
+    on_schema_change='fail'
+) }}
+
 -- Silver: one row per order with its latest state and lifecycle timestamps.
+--
+-- Incremental: per-order rebuild of orders with Bronze rows ingested after
+-- this table's watermark (_max_ingested_at, newest ingestion of the order).
 
 with order_changes as (
 
     select * from {{ ref('stg_orders') }}
     where not is_deleted
+    {% if is_incremental() %}
+      and order_id in (
+          select order_id from {{ ref('stg_orders') }}
+          where ingested_at > (select max(_max_ingested_at) from {{ this }})
+      )
+    {% endif %}
 
 ),
 
@@ -28,7 +44,8 @@ lifecycle as (
         min(updated_at) filter (where order_status = 'cancelled') as cancelled_at,
         min(updated_at) filter (where order_status = 'returned')  as returned_at,
         count(*)                                                  as change_count,
-        max(loaded_at)                                            as last_loaded_at
+        max(loaded_at)                                            as last_loaded_at,
+        max(ingested_at)                                          as _max_ingested_at
     from order_changes
     group by order_id
 
@@ -59,6 +76,7 @@ select
     latest_state.updated_at                        as last_updated_at,
     lifecycle.last_loaded_at,
     lifecycle.change_count,
+    lifecycle._max_ingested_at,
 
     latest_state.order_status in ('placed', 'shipped') as is_open,
     latest_state.order_status = 'cancelled'            as is_cancelled,

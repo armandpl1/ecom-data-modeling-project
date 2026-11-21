@@ -126,6 +126,11 @@ jobs:
       - name: Build models and run all data and unit tests
         run: uv run dbt build
 
+      - name: Check incremental runs match a full refresh
+        # Two simulated nightly loads, built incrementally and as a full
+        # refresh into separate warehouses: every Gold table must be identical
+        run: uv run python scripts/check_incremental.py
+
       - name: Run the daily pipeline end to end with Dagster
         # Same steps as above, orchestrated: generate, load (a rerun, so it must
         # skip every extract), then dbt build with all tests as asset checks.

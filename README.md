@@ -114,6 +114,46 @@ extract is already in the load log. CI runs the pipeline end to end after the
 plain `dbt build`. Dagster creates its local run database on first use, which
 took about 4 minutes on a slow laptop disk; later runs reuse it.
 
+## Incremental models
+
+Each run processes only what changed since the last one:
+
+| Layer  | Models                                                                                     | How a run decides what to process                                                                                                                                                        |
+| ------ | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bronze | `stg_*`                                                                                    | Raw rows ingested after the newest row already loaded. Rows already there for the same key and `updated_at` compete with the new ones, so the row loaded last still wins                 |
+| Silver | `int_customers_history`, `int_products_history`, `int_subscriptions_history`, `int_orders` | Entities with a Bronze row newer than the table's `_max_ingested_at` watermark: their whole history is rebuilt (delete+insert on the entity key), so a late row lands in the right place |
+| Gold   | `fact_orders`, `fact_subscriptions`                                                        | Orders and subscriptions whose inputs (including the customer and product history) were ingested in the latest load round, or `incremental_lookback_hours` before it (default 72)        |
+
+`dim_customer`, `dim_product`, `dim_date`, `fact_subscription_mrr_monthly`,
+`int_orders_enriched` and `int_customer_tier_history` stay full tables: a
+change to one customer or product can move rows across the whole table, and
+the monthly snapshot gains a row for every live subscription each month.
+`int_customer_changes` (ephemeral) still reads every customer; only the SCD2
+step is limited to the changed ones. A run that misses more than the
+look-back window needs `dbt build --full-refresh`; run one weekly as a safety
+net.
+
+**Checked against a full refresh:** `make check-incremental`
+(`scripts/check_incremental.py`, also run in CI) splits the generated
+extracts into two nightly loads on `_loaded_at` and builds them
+incrementally, then builds a full refresh over the same raw data in a second
+warehouse and compares every Gold and restricted table (row counts and a
+content hash per column). Measured on the default data, with batch 2 being
+the last 30 days of loads:
+
+| Measure                                            | Result                                                                                 |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Raw rows read by the incremental run on batch 2    | 2,070 (129 customers, 4 products, 1,899 orders, 38 subscriptions): exactly batch 2     |
+| Silver entities rebuilt                            | 111 of 1,000 customers, 4 of 80 products, 31 of 326 subscriptions, 792 of 5,998 orders |
+| Gold rows recomputed (look-back 0)                 | 1,353 of 5,998 orders, 37 of 326 subscriptions                                         |
+| Raw rows read by a rerun with no new load          | 0                                                                                      |
+| Gold and restricted tables equal to a full refresh | 7 of 7                                                                                 |
+
+On data this small, the incremental run is not faster: on a laptop with a
+slow disk it took 74.7 s against 45.6 s for a full refresh of both batches,
+because the per-entity bookkeeping costs more than rebuilding 21k rows. The
+work it skips grows with history, so the gain appears at real volumes.
+
 ## Personal data and contracts
 
 **Gold exposes no raw personal data.** `dim_customer` shows masked values,
@@ -643,12 +683,12 @@ lint ──┐
 test ──┘
 ```
 
-| Job           | Runs                                                                                                                                      | Blocks        |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| `lint`        | `uv lock --check`, then every pre-commit hook: ruff, black, flake8, file hygiene                                                          | `dbt`         |
-| `test`        | `pytest` for the data generator; JUnit report uploaded                                                                                    | `dbt`         |
-| `dbt`         | Generate data, load the raw layer, `dbt parse`, `dbt build` (all models, data and unit tests), the Dagster pipeline end to end, docs site | `deploy-docs` |
-| `deploy-docs` | Publishes the dbt docs site to GitHub Pages. Only on `main`, only after every job passes                                                  | (deploys)     |
+| Job           | Runs                                                                                                                                                                             | Blocks        |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `lint`        | `uv lock --check`, then every pre-commit hook: ruff, black, flake8, file hygiene                                                                                                 | `dbt`         |
+| `test`        | `pytest` for the data generator; JUnit report uploaded                                                                                                                           | `dbt`         |
+| `dbt`         | Generate data, load the raw layer, `dbt parse`, `dbt build` (all models, data and unit tests), the incremental-vs-full-refresh check, the Dagster pipeline end to end, docs site | `deploy-docs` |
+| `deploy-docs` | Publishes the dbt docs site to GitHub Pages. Only on `main`, only after every job passes                                                                                         | (deploys)     |
 
 Production practices in the pipeline:
 
@@ -672,6 +712,7 @@ make lint      # same checks as the CI lint job
 make test      # unit tests
 make build     # generate data, load the raw layer, dbt parse, dbt build
 make pipeline  # the same, orchestrated by Dagster
+make check-incremental  # incremental runs vs a full refresh: Gold must be identical
 make ci        # everything CI runs
 ```
 
