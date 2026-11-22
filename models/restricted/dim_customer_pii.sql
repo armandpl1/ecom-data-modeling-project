@@ -3,10 +3,15 @@
 -- gold.dim_customer, so the two join one to one.
 --
 -- It lives in its own schema, `restricted`, so access can be granted
--- separately. DuckDB has no roles; on Snowflake or BigQuery, use a role or
--- column masking policies instead of a separate schema.
+-- separately. On Databricks every column here also gets a Unity Catalog
+-- column mask (macros/unity_catalog.sql): only the pii_readers group sees
+-- the values. DuckDB has no roles or masks.
 
-{{ config(schema='restricted', materialized='table') }}
+{{ config(
+    schema='restricted',
+    materialized='table',
+    post_hook="{{ apply_pii_masks(this) }}"
+) }}
 
 select
     customer_sk,

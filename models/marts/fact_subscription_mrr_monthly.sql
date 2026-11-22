@@ -45,9 +45,9 @@ customers as (
 )
 
 select
-    md5(state_at_month_end.subscription_id || '|' || cast(state_at_month_end.month_start as varchar))
+    md5(state_at_month_end.subscription_id || '|' || cast(state_at_month_end.month_start as string))
         as subscription_month_sk,
-    cast(strftime(state_at_month_end.month_end, '%Y%m%d') as integer)
+    {{ date_key('state_at_month_end.month_end') }}
         as month_end_date_key,
     state_at_month_end.month_start,
     state_at_month_end.subscription_id,

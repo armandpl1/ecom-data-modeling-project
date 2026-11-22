@@ -11,7 +11,7 @@
     Raw values stay in Silver and in restricted.dim_customer_pii. -#}
 {% macro mask_pii(column, kind) -%}
     {%- if kind == 'email_hash' -%}
-        sha256(lower(trim({{ column }})))
+        {{ sha256_hex('lower(trim(' ~ column ~ '))') }}
     {%- elif kind == 'email_domain' -%}
         nullif(split_part(lower(trim({{ column }})), '@', 2), '')
     {%- elif kind == 'phone_last4' -%}

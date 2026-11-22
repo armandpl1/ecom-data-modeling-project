@@ -26,9 +26,9 @@ with history as (
         *,
         md5(concat_ws('||',
             {%- for col in tracked_columns %}
-            coalesce(cast({{ col }} as varchar), '<null>'),
+            coalesce(cast({{ col }} as string), '<null>'),
             {%- endfor %}
-            cast(is_deleted as varchar)
+            cast(is_deleted as string)
         )) as _change_hash
     from {{ relation }}
     {%- if where %}
@@ -51,7 +51,7 @@ compared as (
 
 changes_only as (
 
-    select * exclude (_change_hash, _previous_hash)
+    select {{ star_except(['_change_hash', '_previous_hash']) }}
     from compared
     where _previous_hash is null
        or _change_hash <> _previous_hash
@@ -61,7 +61,7 @@ changes_only as (
 versioned as (
 
     select
-        md5({{ unique_key }} || '|' || cast(updated_at as varchar)) as {{ surrogate_key }},
+        md5({{ unique_key }} || '|' || cast(updated_at as string)) as {{ surrogate_key }},
         *,
         updated_at as valid_from_timestamp,
         lead(updated_at) over (

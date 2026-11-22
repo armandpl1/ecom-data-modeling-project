@@ -40,7 +40,7 @@ select
     -- Keys
     orders.order_id,
     coalesce(customers.customer_sk, {{ unknown_member_key() }})   as customer_sk,
-    cast(strftime(orders.order_placed_at, '%Y%m%d') as integer)   as order_date_key,
+    {{ date_key('orders.order_placed_at') }}                      as order_date_key,
     orders.customer_id,
 
     -- Attributes

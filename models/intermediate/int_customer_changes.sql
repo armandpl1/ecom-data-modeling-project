@@ -32,23 +32,61 @@ change_points as (
 
 ),
 
-state_at_change as (
+-- Each change point with the latest profile row at or before it, and the
+-- tier in effect then (none if never subscribed). An as-of join written as a
+-- join plus "keep the latest match", so it runs on any engine (DuckDB's ASOF
+-- JOIN gives the same rows).
+profile_at_change as (
 
     select
-        profile.* exclude (updated_at),
-        change_points.changed_at                 as updated_at,
-        coalesce(tier.subscription_tier, 'none') as subscription_tier
+        change_points.customer_id,
+        change_points.changed_at,
+        profile.updated_at as profile_updated_at
     from change_points
-    -- Latest profile row at or before the change point
-    asof join profile_changes as profile
+    inner join profile_changes as profile
         on
             change_points.customer_id = profile.customer_id
             and change_points.changed_at >= profile.updated_at
-    -- Tier in effect at the change point (none if never subscribed)
-    asof left join tier_history as tier
+    qualify row_number() over (
+        partition by change_points.customer_id, change_points.changed_at
+        order by profile.updated_at desc
+    ) = 1
+
+),
+
+tier_at_change as (
+
+    select
+        change_points.customer_id,
+        change_points.changed_at,
+        tier.subscription_tier
+    from change_points
+    inner join tier_history as tier
         on
             change_points.customer_id = tier.customer_id
             and change_points.changed_at >= tier.valid_from_timestamp
+    qualify row_number() over (
+        partition by change_points.customer_id, change_points.changed_at
+        order by tier.valid_from_timestamp desc
+    ) = 1
+
+),
+
+state_at_change as (
+
+    select
+        {{ star_except(['updated_at'], 'profile') }},
+        profile_at_change.changed_at             as updated_at,
+        coalesce(tier.subscription_tier, 'none') as subscription_tier
+    from profile_at_change
+    inner join profile_changes as profile
+        on
+            profile_at_change.customer_id = profile.customer_id
+            and profile_at_change.profile_updated_at = profile.updated_at
+    left join tier_at_change as tier
+        on
+            profile_at_change.customer_id = tier.customer_id
+            and profile_at_change.changed_at = tier.changed_at
 
 )
 

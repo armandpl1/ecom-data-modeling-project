@@ -14,14 +14,14 @@ models:
       MRR. Customers with no orders or subscriptions have zeros.
     columns:
       - name: customer_id
-        data_type: varchar
+        data_type: string
         description: Natural key of the customer.
         data_tests: [unique, not_null]
       - name: customer_segment
-        data_type: varchar
+        data_type: string
         description: Segment on the customer's latest version. Null for a customer not in dim_customer yet.
       - name: state
-        data_type: varchar
+        data_type: string
         description: State on the customer's latest version.
       - name: is_deleted_customer
         data_type: boolean
@@ -72,7 +72,7 @@ models:
       recency and frequency scores.
     columns:
       - name: customer_id
-        data_type: varchar
+        data_type: string
         description: Natural key of the customer.
         data_tests:
           - unique
@@ -119,7 +119,7 @@ models:
         description: The three scores as one number, e.g. 545.
         data_tests: [not_null]
       - name: segment
-        data_type: varchar
+        data_type: string
         description: >
           Champions (R and F 4-5), Loyal (F 4-5), Potential loyalist (R 4-5,
           F 2-3), New (R 4-5, F 1), At risk (R 1-2, F 3), Hibernating (R 1-2,

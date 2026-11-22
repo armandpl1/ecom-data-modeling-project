@@ -30,7 +30,7 @@ cleaned as (
         -- Phones arrive in many formats: keep digits only, drop the US
         -- country code (1 or 001) and split off any extension.
         nullif(trim(phone), '')                          as phone_raw,
-        nullif(regexp_replace(split_part(phone, 'x', 1), '[^0-9]', '', 'g'), '')
+        nullif({{ regexp_replace_all("split_part(phone, 'x', 1)", "'[^0-9]'", "''") }}, '')
             as phone_digits,
         nullif(split_part(phone, 'x', 2), '')            as phone_extension,
 
@@ -57,7 +57,7 @@ cleaned as (
 standardized as (
 
     select
-        * exclude (phone_digits),
+        {{ star_except(['phone_digits']) }},
         case
             when length(phone_digits) = 11 and phone_digits like '1%' then substr(phone_digits, 2)
             when length(phone_digits) = 13 and phone_digits like '001%' then substr(phone_digits, 4)
@@ -73,7 +73,7 @@ candidates as (
     {% if is_incremental() %}
     -- Rows already here for the same (key, updated_at) compete with the new
     -- ones, so the row loaded last still wins across runs
-        union all by name
+        {{ union_all_same_columns() }}
         select * from {{ this }} as existing
         where exists (
             select 1 from standardized as new

@@ -28,15 +28,15 @@ models:
             deleted_at: deleted_at
     columns:
       - name: customer_sk
-        data_type: varchar
+        data_type: string
         description: '{{ doc("scd2_sk") }}'
         data_tests: [unique, not_null]
       - name: customer_id
-        data_type: varchar
+        data_type: string
         description: 'Natural key of the customer, the same on every version.'
         data_tests: [not_null]
       - name: subscription_tier
-        data_type: varchar
+        data_type: string
         description: Plan of the customer's live subscription during this version (none, basic, plus, premium).
         data_tests:
           - accepted_values:
@@ -60,38 +60,38 @@ models:
         data_type: timestamp
         description: '{{ doc("deleted_at") }}'
       - name: initials
-        data_type: varchar
+        data_type: string
         description: >
           First and last initials ("J. S."). Masked: the full name is only in
           restricted.dim_customer_pii.
       - name: email_hash
-        data_type: varchar
+        data_type: string
         description: >
           SHA-256 of the lowercased, trimmed email. Masked: identical emails
           give identical hashes, so it still joins and detects changes, but
           the address can't be read. Raw email: restricted.dim_customer_pii.
       - name: email_domain
-        data_type: varchar
+        data_type: string
         description: 'Domain of the email address (the part after @).'
       - name: phone_last4
-        data_type: varchar
+        data_type: string
         description: 'Last 4 digits of the phone number. Masked: the full number is only in restricted.dim_customer_pii.'
       - name: city
-        data_type: varchar
+        data_type: string
         description: 'City.'
       - name: state
-        data_type: varchar
+        data_type: string
         description: 'Two-letter US state code.'
       - name: zip3
-        data_type: varchar
+        data_type: string
         description: >
           First 3 digits of the ZIP code: an area, not an address. The full
           ZIP and street address are only in restricted.dim_customer_pii.
       - name: country
-        data_type: varchar
+        data_type: string
         description: 'Country code (always US).'
       - name: customer_segment
-        data_type: varchar
+        data_type: string
         description: 'consumer, small_business or enterprise.'
       - name: marketing_opt_in
         data_type: boolean
@@ -120,27 +120,27 @@ models:
             deleted_at: deleted_at
     columns:
       - name: product_sk
-        data_type: varchar
+        data_type: string
         description: '{{ doc("scd2_sk") }}'
         data_tests: [unique, not_null]
       - name: product_id
-        data_type: varchar
+        data_type: string
         description: 'Natural key of the product, the same on every version.'
         data_tests: [not_null]
       - name: product_line
-        data_type: varchar
+        data_type: string
         description: Name without the color, e.g. "Deluxe Tent".
       - name: product_style
-        data_type: varchar
+        data_type: string
         description: First word of the product line, e.g. "Deluxe".
       - name: product_type
-        data_type: varchar
+        data_type: string
         description: Rest of the product line, e.g. "Tent".
       - name: color
-        data_type: varchar
+        data_type: string
         description: Color variant from the product name.
       - name: category
-        data_type: varchar
+        data_type: string
         description: 'Product category.'
         data_tests:
           - accepted_values:
@@ -155,7 +155,7 @@ models:
                 where: "product_sk <> '-1'"
           - not_negative
       - name: price_band
-        data_type: varchar
+        data_type: string
         description: Price range of this version's unit_price. Prefixed with a number so it sorts correctly.
       - name: launch_date
         data_type: date
@@ -186,16 +186,16 @@ models:
         data_type: boolean
         description: '{{ doc("is_current") }}'
       - name: sku
-        data_type: varchar
+        data_type: string
         description: 'Stock keeping unit. Prefix is the category code.'
       - name: product_name
-        data_type: varchar
+        data_type: string
         description: 'Full product name, e.g. "Deluxe Tent - MediumOrchid".'
       - name: category_code
-        data_type: varchar
+        data_type: string
         description: 'SKU prefix for the category (APP, BOO, ELE, HOM, OUT).'
       - name: currency
-        data_type: varchar
+        data_type: string
         description: 'Price currency (always USD).'
       - name: is_active
         data_type: boolean
@@ -240,7 +240,7 @@ models:
         data_type: bigint
         description: Fiscal year, named by the calendar year it ends in (FY2026 = Feb 2025 – Jan 2026 by default).
       - name: holiday_name
-        data_type: varchar
+        data_type: string
         description: US federal holiday falling on this date (actual date, not observed).
       - name: is_observed_holiday
         data_type: boolean
@@ -249,7 +249,7 @@ models:
         data_type: boolean
         description: Weekday that is not an observed federal holiday.
       - name: retail_event_name
-        data_type: varchar
+        data_type: string
         description: Black Friday or Cyber Monday.
       - name: as_of_date
         data_type: date
@@ -264,16 +264,16 @@ models:
         data_type: bigint
         description: 'Calendar quarter, 1–4.'
       - name: quarter_name
-        data_type: varchar
+        data_type: string
         description: 'Calendar quarter label, e.g. Q3.'
       - name: month
         data_type: bigint
         description: 'Calendar month, 1–12.'
       - name: month_name
-        data_type: varchar
+        data_type: string
         description: 'Month name, e.g. October.'
       - name: year_month
-        data_type: varchar
+        data_type: string
         description: 'Year and month as text, e.g. 2026-10. Sorts correctly.'
       - name: day_of_month
         data_type: bigint
@@ -285,7 +285,7 @@ models:
         data_type: bigint
         description: 'ISO day of week: 1 = Monday … 7 = Sunday.'
       - name: day_name
-        data_type: varchar
+        data_type: string
         description: 'Day name, e.g. Monday.'
       - name: iso_week
         data_type: bigint
@@ -315,10 +315,10 @@ models:
         data_type: bigint
         description: 'Fiscal month, 1–12. Month 1 is fiscal_year_start_month.'
       - name: fiscal_year_name
-        data_type: varchar
+        data_type: string
         description: 'Fiscal year label, e.g. FY2026.'
       - name: fiscal_quarter_name
-        data_type: varchar
+        data_type: string
         description: 'Fiscal quarter label, e.g. FY2026-Q1.'
       - name: is_weekend
         data_type: boolean
@@ -327,7 +327,7 @@ models:
         data_type: boolean
         description: 'A US federal holiday falls on this date.'
       - name: observed_holiday_name
-        data_type: varchar
+        data_type: string
         description: 'Federal holiday observed (day off) on this date. Can differ from holiday_name when the holiday falls on a weekend.'
       - name: is_retail_event
         data_type: boolean
@@ -405,15 +405,15 @@ models:
             severity: warn
     columns:
       - name: order_line_id
-        data_type: varchar
+        data_type: string
         description: 'Unique ID of the order line: <order_id>-<order_line_number>.'
         data_tests: [unique, not_null]
       - name: order_id
-        data_type: varchar
+        data_type: string
         description: Degenerate dimension (order number, no dimension table of its own).
         data_tests: [not_null]
       - name: customer_sk
-        data_type: varchar
+        data_type: string
         description: 'Customer version valid when the order was placed. Join to dim_customer.'
         data_tests:
           - not_null
@@ -425,7 +425,7 @@ models:
               config:
                 severity: warn
       - name: product_sk
-        data_type: varchar
+        data_type: string
         description: 'Product version valid when the order was placed. Join to dim_product.'
         data_tests:
           - not_null
@@ -506,19 +506,19 @@ models:
         data_type: integer
         description: 'Line number within the order, from 1.'
       - name: customer_id
-        data_type: varchar
+        data_type: string
         description: 'Natural key of the customer.'
       - name: product_id
-        data_type: varchar
+        data_type: string
         description: 'Natural key of the product.'
       - name: order_status
-        data_type: varchar
+        data_type: string
         description: 'Latest status: placed, shipped, delivered, cancelled or returned.'
       - name: payment_method
-        data_type: varchar
+        data_type: string
         description: 'card, paypal, apple_pay or gift_card.'
       - name: currency
-        data_type: varchar
+        data_type: string
         description: 'Order currency (always USD).'
       - name: days_to_ship
         data_type: bigint
@@ -575,11 +575,11 @@ models:
             expression: "returned_lines <= line_count"
     columns:
       - name: order_id
-        data_type: varchar
+        data_type: string
         description: The order (degenerate dimension).
         data_tests: [unique, not_null]
       - name: customer_sk
-        data_type: varchar
+        data_type: string
         description: Customer version valid when the order was placed, or the unknown member.
         data_tests:
           - not_null
@@ -600,16 +600,16 @@ models:
                 to: ref('dim_date')
                 field: date_key
       - name: customer_id
-        data_type: varchar
+        data_type: string
         description: Natural key of the customer.
       - name: order_status
-        data_type: varchar
+        data_type: string
         description: Latest order status.
       - name: payment_method
-        data_type: varchar
+        data_type: string
         description: How the order was paid.
       - name: currency
-        data_type: varchar
+        data_type: string
         description: Currency of the amounts.
       - name: line_count
         data_type: bigint
@@ -697,15 +697,15 @@ models:
             expression: "mrr_change <> 0 or is_churn_event"
     columns:
       - name: subscription_event_id
-        data_type: varchar
+        data_type: string
         description: 'Unique ID of the event (the subscription version that caused it).'
         data_tests: [unique, not_null]
       - name: subscription_id
-        data_type: varchar
+        data_type: string
         description: Degenerate dimension.
         data_tests: [not_null]
       - name: customer_sk
-        data_type: varchar
+        data_type: string
         description: Customer version at the time of the event.
         data_tests:
           - not_null
@@ -726,7 +726,7 @@ models:
                 to: ref('dim_date')
                 field: date_key
       - name: movement_type
-        data_type: varchar
+        data_type: string
         description: >
           new, expansion, contraction, pause, resume, reactivation, churn, or
           no_mrr_change (cancellation of a trial or paused subscription).
@@ -757,32 +757,32 @@ models:
         description: '{{ doc("paying_mrr") }} Value after the event. Semi-additive.'
         data_tests: [not_null, not_negative]
       - name: churn_type
-        data_type: varchar
+        data_type: string
         description: For churn events, what the subscription was before cancelling (paid, trial, paused).
         data_tests:
           - accepted_values:
               arguments:
                 values: [paid, trial, paused]
       - name: customer_id
-        data_type: varchar
+        data_type: string
         description: 'Natural key of the customer.'
       - name: event_at
         data_type: timestamp
         description: 'When the change happened in the source.'
       - name: status_before
-        data_type: varchar
+        data_type: string
         description: 'Status before the event. Null for the first version.'
       - name: status_after
-        data_type: varchar
+        data_type: string
         description: 'Status after the event.'
       - name: plan_before
-        data_type: varchar
+        data_type: string
         description: 'Plan before the event.'
       - name: plan_after
-        data_type: varchar
+        data_type: string
         description: 'Plan after the event.'
       - name: billing_period
-        data_type: varchar
+        data_type: string
         description: 'monthly or annual.'
       - name: is_churn_event
         data_type: boolean
@@ -803,7 +803,7 @@ models:
             combination_of_columns: [subscription_id, month_start]
     columns:
       - name: subscription_month_sk
-        data_type: varchar
+        data_type: string
         description: 'Unique key: hash of subscription_id and month_start.'
         data_tests: [unique, not_null]
       - name: mrr
@@ -811,7 +811,7 @@ models:
         description: '{{ doc("paying_mrr") }} Semi-additive: sum across subscriptions, not across months.'
         data_tests: [not_null, not_negative]
       - name: customer_sk
-        data_type: varchar
+        data_type: string
         description: Customer version at month end (or the last one before a delete).
         data_tests:
           - not_null
@@ -834,19 +834,19 @@ models:
         data_type: date
         description: 'First day of the month this row describes.'
       - name: subscription_id
-        data_type: varchar
+        data_type: string
         description: 'Degenerate dimension.'
       - name: customer_id
-        data_type: varchar
+        data_type: string
         description: 'Natural key of the customer.'
       - name: plan_name
-        data_type: varchar
+        data_type: string
         description: 'Plan at month end: basic, plus or premium.'
       - name: billing_period
-        data_type: varchar
+        data_type: string
         description: 'monthly or annual.'
       - name: subscription_status
-        data_type: varchar
+        data_type: string
         description: 'Status at month end: trialing, active, past_due, paused or cancelled.'
       - name: started_on
         data_type: date

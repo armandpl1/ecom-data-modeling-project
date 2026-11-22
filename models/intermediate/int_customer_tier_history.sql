@@ -33,7 +33,7 @@ tier_at_change as (
         change_points.customer_id,
         change_points.changed_at,
         coalesce(
-            arg_max(
+            max_by(
                 subscription_versions.plan_name,
                 case subscription_versions.plan_name
                     when 'premium' then 3

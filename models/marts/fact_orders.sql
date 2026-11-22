@@ -36,14 +36,14 @@ select
     -- Keys
     order_line_id,
     order_id,                                       -- degenerate dimension
-    line_number                                          as order_line_number,
+    line_number                                           as order_line_number,
     -- An order whose customer or product version isn't known yet points to
     -- the unknown member instead of failing the build (unknown_member_rows warns)
-    coalesce(customer_sk, {{ unknown_member_key() }})    as customer_sk,
-    coalesce(product_sk, {{ unknown_member_key() }})     as product_sk,
-    cast(strftime(order_placed_at, '%Y%m%d') as integer) as order_date_key,
-    cast(strftime(shipped_at, '%Y%m%d') as integer)      as ship_date_key,
-    cast(strftime(delivered_at, '%Y%m%d') as integer)    as delivery_date_key,
+    coalesce(customer_sk, {{ unknown_member_key() }})     as customer_sk,
+    coalesce(product_sk, {{ unknown_member_key() }})      as product_sk,
+    {{ date_key('order_placed_at') }}                     as order_date_key,
+    {{ date_key('shipped_at') }}                          as ship_date_key,
+    {{ date_key('delivered_at') }}                        as delivery_date_key,
     customer_id,
     product_id,
 
@@ -54,35 +54,35 @@ select
 
     -- Additive measures
     quantity,
-    gross_amount                                         as gross_revenue,
+    gross_amount                                          as gross_revenue,
     discount_amount,
-    net_amount                                           as net_revenue,
-    case when is_cancelled then net_amount else 0 end    as cancelled_revenue,
+    net_amount                                            as net_revenue,
+    case when is_cancelled then net_amount else 0 end     as cancelled_revenue,
     -- Returned: the whole order came back, or just this line
     case
         when not is_cancelled and (is_returned or is_line_returned) then net_amount
         else 0
-    end                                                  as returned_revenue,
+    end                                                   as returned_revenue,
     case when is_cancelled or is_returned or is_line_returned then 0 else net_amount end
         as recognized_revenue,
 
     -- Non-additive measures (average them, don't sum them)
     unit_price,
     discount_pct,
-    date_diff('day', order_placed_at, shipped_at)        as days_to_ship,
-    date_diff('day', order_placed_at, delivered_at)      as days_to_deliver,
+    {{ days_between('order_placed_at', 'shipped_at') }}   as days_to_ship,
+    {{ days_between('order_placed_at', 'delivered_at') }} as days_to_deliver,
 
     -- Timestamps and flags
     order_placed_at,
     shipped_at,
     delivered_at,
     cancelled_at,
-    coalesce(returned_at, line_returned_at)              as returned_at,
+    coalesce(returned_at, line_returned_at)               as returned_at,
     last_updated_at,
     is_open,
     is_cancelled,
-    is_returned or is_line_returned                      as is_returned,
+    is_returned or is_line_returned                       as is_returned,
     is_line_returned,
-    delivered_at is not null and shipped_at is null      as is_missing_ship_event
+    delivered_at is not null and shipped_at is null       as is_missing_ship_event
 
 from orders

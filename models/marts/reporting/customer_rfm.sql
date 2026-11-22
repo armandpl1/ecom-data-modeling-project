@@ -28,16 +28,19 @@ scored as (
     select
         customers.customer_id,
         customers.last_order_date,
-        as_of.as_of_date - customers.last_order_date                     as recency_days,
-        customers.orders                                                 as frequency,
-        cast(customers.recognized_revenue as decimal(14, 2))             as monetary,
-        ntile(5) over (
-            order by as_of.as_of_date - customers.last_order_date desc, customers.customer_id
-        )                                                                as recency_score,
-        ntile(5) over (order by customers.orders, customers.customer_id) as frequency_score,
-        ntile(5) over (
+        {{ days_between('customers.last_order_date', 'as_of.as_of_date') }} as recency_days,
+        customers.orders                                                    as frequency,
+        cast(customers.recognized_revenue as decimal(14, 2))                as monetary,
+        -- ntile is int on some engines; the contract (and DuckDB) say bigint
+        cast(ntile(5) over (
+            order by customers.last_order_date asc, customers.customer_id asc
+        ) as bigint)                                                        as recency_score,
+        cast(ntile(5) over (
+            order by customers.orders, customers.customer_id
+        ) as bigint)                                                        as frequency_score,
+        cast(ntile(5) over (
             order by customers.recognized_revenue, customers.customer_id
-        )                                                                as monetary_score
+        ) as bigint)                                                        as monetary_score
     from customers
     cross join as_of
 

@@ -33,7 +33,7 @@ products as (
 )
 
 select
-    lines.* exclude (_max_ingested_at),
+    {{ star_except(['_max_ingested_at'], 'lines') }},
 
     orders.customer_id,
     orders.order_status,

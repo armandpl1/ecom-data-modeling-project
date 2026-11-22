@@ -37,3 +37,6 @@ infra/terraform/*.tfplan
 # Airflow environment and local state (airflow/uv.lock is committed)
 airflow/.venv/
 airflow/.airflow/
+
+# Local Databricks settings (workspace host, warehouse id)
+.env.databricks

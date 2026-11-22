@@ -20,7 +20,7 @@ where
     days >= 365
     and (
         holidays <> 11
-        or isodow(thanksgiving) <> 4
+        or {{ iso_day_of_week('thanksgiving') }} <> 4
         or day(thanksgiving) not between 22 and 28
         or black_friday <> thanksgiving + interval 1 day
     )

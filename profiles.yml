@@ -25,6 +25,17 @@ ecom:
       attach:
         - path: "{{ env_var('ECOM_PROD_STATE_DIR', 'prod-state') }}/ecom_prod.duckdb"
           read_only: true
+    # Databricks (Unity Catalog), on a serverless SQL warehouse. Settings come
+    # from .env.databricks (git-ignored); auth is a browser sign-in (OAuth),
+    # cached after the first run. Load raw first: make databricks-load
+    databricks:
+      type: databricks
+      host: "{{ env_var('DATABRICKS_HOST', 'unset') | replace('https://', '') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH', 'unset') }}"
+      catalog: "{{ env_var('DATABRICKS_CATALOG', 'ecom') }}"
+      schema: default
+      auth_type: oauth
+      threads: 4
     # sqlfluff compiles every model against this empty in-memory database, so
     # linting never depends on (or touches) a local warehouse and gives the
     # same result locally and in CI.

@@ -594,6 +594,30 @@ row counts as `make build`.
 
 ---
 
+## Step 22: Databricks and cross-database SQL ✅
+
+**Goal:** the same dbt project on Databricks with Unity Catalog, and SQL that
+is no longer tied to DuckDB (gap 12 in IMPROVEMENTS.txt).
+
+1. `dbt-databricks` 1.13.1 (the 1.12 releases need an older dbt-core) and a
+   `databricks` target in profiles.yml (OAuth browser sign-in; host and
+   warehouse from `.env.databricks`, git-ignored).
+2. `scripts/databricks_load_raw.py` (`make databricks-load`): volume upload,
+   COPY INTO, `raw._load_log`.
+3. `macros/cross_db.sql`: dispatch macros for the SQL that differs; models
+   use portable SQL elsewhere. Contracts use `string` instead of `varchar`.
+4. `macros/unity_catalog.sql`: `pii_mask` function, column masks on the
+   restricted table, grants on gold and reporting (on-run hooks).
+5. `macros/should_store_failures.sql`: no test-failure views on Databricks
+   (Free Edition object limits).
+6. `scripts/compare_engines.py` (`make check-databricks`) and unit tests.
+
+**Check:** `make build` (DuckDB, unchanged except average_order_value),
+`make databricks-load`, `make databricks-build` (311 passed, 2 allowed
+warnings), `make check-databricks` (13 of 13 tables identical).
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in

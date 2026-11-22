@@ -10,7 +10,7 @@ select
     zip3
 from {{ ref('dim_customer') }}
 where
-    (email_hash is not null and not regexp_full_match(email_hash, '[0-9a-f]{64}'))
-    or (phone_last4 is not null and not regexp_full_match(phone_last4, '[0-9]{4}'))
+    (email_hash is not null and not {{ regexp_full_match('email_hash', "'[0-9a-f]{64}'") }})
+    or (phone_last4 is not null and not {{ regexp_full_match('phone_last4', "'[0-9]{4}'") }})
     or email_domain like '%@%'
     or length(zip3) > 3
