@@ -366,6 +366,70 @@ Notes:
   `--follow` (see the script's docstring). About 1 s of the lag is the poll
   interval.
 
+## Open table format: Apache Iceberg
+
+Gold lives in one DuckDB file, which only DuckDB can open. `make iceberg`
+also publishes every Gold table as an [Apache Iceberg](https://iceberg.apache.org/)
+table: Parquet data files plus metadata files that record every version
+(snapshot) of the table. Spark, Trino, Snowflake, Databricks and DuckDB can
+all read Iceberg, so other teams can query Gold without going through this
+warehouse.
+
+```bash
+make build          # dbt build: Gold in ecom.duckdb
+make iceberg        # publish Gold to data/lakehouse (reruns are safe)
+make check-iceberg  # read it back with DuckDB's iceberg extension and compare with Gold
+```
+
+How it works (`scripts/publish_iceberg.py`, settings in `ops/lakehouse.yml`):
+
+- **Catalog:** PyIceberg's SQL catalog in a SQLite file
+  (`data/lakehouse/catalog.db`) maps each table name to its current metadata
+  file. A real deployment would swap in a REST, Glue or Unity catalog; the
+  tables stay the same.
+- **One atomic commit per table:** each publish overwrites the table in a
+  single commit, so a reader sees the old version or the new one, never a mix.
+- **Reruns change nothing:** a table whose content hash matches its current
+  snapshot is skipped, so no new version is written.
+- **Traceable:** every snapshot records the dbt invocation that built it
+  (`publish-id`) and its content hash. Every table, changed or not, records
+  the last publish that covered it, and `check-iceberg` fails unless all six
+  agree. Iceberg has no multi-table transaction, so this is how a reader knows
+  the tables belong to the same run.
+- **Partitioned:** `fact_orders` (by month of `order_placed_at`) and
+  `fact_subscription_mrr_monthly` (by month of `month_start`). A query on one
+  month plans 1 of the 34 data files.
+- **Time travel:** the snapshots of the last 5 publishes are kept, and older
+  ones are expired. Read an older version with
+  `iceberg_scan('<metadata file>', snapshot_from_id=<id>)` in DuckDB, or
+  `table.scan(snapshot_id=...)` in PyIceberg.
+- **Schema guard:** before anything is written, every table's new schema is
+  compared with its Iceberg schema:
+
+| Change in Gold                                         | Result                                          |
+| ------------------------------------------------------ | ----------------------------------------------- |
+| New column                                             | Added to the Iceberg schema (schema evolution)  |
+| Safe widening: int to bigint, float to double, decimal | Iceberg type widened                            |
+| Dropped column, or any other type change               | Publish stops, nothing is written, exit 1       |
+
+A breaking change stops every table, not just the broken one, so the
+lakehouse never mixes two versions of the model.
+
+**Measured** on the sample data: 6 tables (14,326 rows) published in about 7
+seconds into 2.2 MB; a rerun changed 0 tables; `check-iceberg` found 6 of 6
+tables identical to Gold row for row (EXCEPT ALL both ways, so duplicates
+count), read by a different reader from the one that wrote them; a June 2025
+query on `fact_orders` planned 1 of 34 files and returned the same 146 rows
+as Gold.
+
+In the pipeline: the `gold_iceberg` Dagster asset publishes after
+`dbt build` in `daily_pipeline` (a breaking change fails the run and alerts),
+and CI publishes, reruns (which must change nothing) and checks on every
+pull request. Tests in `scripts/tests/test_publish_iceberg.py` cover
+partitioning, reruns, time travel, schema evolution and widening, the guard
+blocking a dropped column and a type change, snapshot expiry, and the
+publish ids.
+
 ## The raw data
 
 Each file is an append-only extract, as if copied nightly from the source system. Every change to a record is a **new row**; nothing is edited in place. To get the current state of a record you have to pick its latest version.
@@ -860,12 +924,12 @@ lint ──┐
 test ──┘
 ```
 
-| Job           | Runs                                                                                                                                                                             | Blocks        |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| `lint`        | `uv lock --check`, then every pre-commit hook: ruff, black, flake8, sqlfluff (SQL style), file hygiene                                                                           | `dbt`         |
-| `test`        | `pytest` for the data generator; JUnit report uploaded                                                                                                                           | `dbt`         |
-| `dbt`         | Generate data, load the raw layer, `dbt parse`, `dbt build` (all models, data and unit tests), the incremental-vs-full-refresh check, the Dagster pipeline end to end, docs site | `deploy-docs` |
-| `deploy-docs` | Publishes the dbt docs site to GitHub Pages. Only on `main`, only after every job passes                                                                                         | (deploys)     |
+| Job           | Runs                                                                                                                                                                                                            | Blocks        |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `lint`        | `uv lock --check`, then every pre-commit hook: ruff, black, flake8, sqlfluff (SQL style), file hygiene                                                                                                          | `dbt`         |
+| `test`        | `pytest` for the data generator; JUnit report uploaded                                                                                                                                                          | `dbt`         |
+| `dbt`         | Generate data, load the raw layer, `dbt parse`, `dbt build` (all models, data and unit tests), the Iceberg publish and check, the incremental-vs-full-refresh check, the Dagster pipeline end to end, docs site | `deploy-docs` |
+| `deploy-docs` | Publishes the dbt docs site to GitHub Pages. Only on `main`, only after every job passes                                                                                                                        | (deploys)     |
 
 Production practices in the pipeline:
 
@@ -892,6 +956,7 @@ make pipeline  # the same, orchestrated by Dagster
 make check-incremental  # incremental runs vs a full refresh: Gold must be identical
 make check-slos         # service-level objectives; each breach names its runbook
 make metrics            # validate the semantic layer and export dashboard datasets
+make iceberg            # publish Gold as Apache Iceberg tables (then make check-iceberg)
 make cdc-up             # CDC stack: Postgres, Debezium Server, Redpanda (then cdc-replay, cdc-load)
 make dashboard          # build the Evidence dashboard (needs Node.js)
 make ci        # everything CI runs
@@ -998,12 +1063,16 @@ scripts/export_metrics.py      runs mf query for each dashboard dataset, writes 
 scripts/cdc_source.py          replays the change history into the CDC source Postgres
 scripts/cdc_consumer.py        loads Debezium events from Redpanda into raw.*, exactly once
 scripts/cdc_lag.py             measures commit-to-raw lag
+scripts/publish_iceberg.py     publishes Gold as Apache Iceberg tables, with a schema guard
+scripts/check_iceberg.py       proves the Iceberg tables match Gold
+ops/lakehouse.yml              Iceberg warehouse, catalog, partitions and snapshot retention
 cdc/                           Docker Compose stack, Postgres schema, Debezium Server config
 models/semantic/               semantic models, metrics and the dashboard exposure
 dashboard/                     Evidence dashboard over the semantic-layer metrics
 scripts/raw_data/              generator logic: history (CDC mechanics), one module per table, CSV writer
 scripts/tests/                 Python tests for the generator, mirroring scripts/
 data/raw/                      generated CSVs (not committed)
+data/lakehouse/                Iceberg tables and their SQLite catalog (not committed)
 models/staging/                Bronze: stg_* models and source definitions
 models/intermediate/           Silver: SCD2 history and order logic
 models/marts/                  Gold: dimensions and facts
