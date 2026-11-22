@@ -190,6 +190,11 @@ Pick one item from IMPROVEMENTS.txt and build it. Good first choices:
 - Gap 8 (a reporting mart such as cohort retention): uses everything you
   learned about the star schema.
 
+Or read how Gold is published as Apache Iceberg tables
+(scripts/publish_iceberg.py, README "Open table format"): run `make iceberg`,
+add a column to a Gold model, run it again and watch the schema evolve; then
+change a column's type and watch the schema guard stop the publish.
+
 Done means: dbt build passes, pytest passes, and the README explains it.
 
 ---
