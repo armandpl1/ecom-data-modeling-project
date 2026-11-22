@@ -116,6 +116,37 @@ def test_a_small_batch_breaches_volume(tmp_path: Path, ok_results: Path) -> None
     assert orders["value"] == "40 rows, 40% of previous average"
 
 
+def add_cdc_batch(path: Path, table: str, rows: int, loaded_at: datetime) -> None:
+    with duckdb.connect(str(path)) as con:
+        con.execute(
+            "insert into raw._load_log values (?, ?, ?, ?, ?, ?)",
+            [f"{table}-cdc", table, f"cdc://ecom.public.{table}/0:0-{rows}", rows,
+             "shacdc", loaded_at],
+        )  # fmt: skip
+
+
+def test_small_cdc_batches_dont_breach_volume(tmp_path: Path, ok_results: Path) -> None:
+    """CDC batches are as big as whatever changed: only extracts are compared."""
+    path = make_warehouse(tmp_path / "w.duckdb")
+    add_cdc_batch(path, "orders", 2, T0)
+    assert breached(evaluate(path, ok_results, CONFIG)) == set()
+
+
+def test_a_cdc_only_table_reports_its_stream(tmp_path: Path, ok_results: Path) -> None:
+    path = make_warehouse(tmp_path / "w.duckdb")
+    with duckdb.connect(str(path)) as con:
+        con.execute("delete from raw._load_log where table_name = 'orders'")
+    add_cdc_batch(path, "orders", 5, T0)
+    report = evaluate(path, ok_results, CONFIG)
+    [orders] = [
+        r
+        for r in report["results"]
+        if r["objective"] == "batch_volume" and r["subject"] == "orders"
+    ]
+    assert orders["met"] is True
+    assert orders["value"] == "CDC stream (1 batches), volume not checked"
+
+
 def test_an_empty_first_batch_breaches_volume(tmp_path: Path, ok_results: Path) -> None:
     batches = {t: [(T0, 100)] for t in TABLES}
     batches["customers"] = [(T0, 0)]

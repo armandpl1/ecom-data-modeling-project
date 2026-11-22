@@ -7,8 +7,10 @@ import dagster as dg
 import pytest
 from orchestration import definitions
 from orchestration.definitions import (
+    CdcSettings,
     WarehousePaths,
     breach_summary,
+    cdc_changes,
     daily_pipeline,
     defs,
     failure_message,
@@ -60,7 +62,7 @@ def test_dbt_tests_become_asset_checks(graph) -> None:
 
 def test_daily_schedule_is_stopped_by_default() -> None:
     repo = defs.get_repository_def()
-    [schedule] = repo.schedule_defs
+    schedule = repo.get_schedule_def("daily_pipeline_schedule")
     assert schedule.cron_schedule == "0 6 * * *"
     assert schedule.execution_timezone == "America/Toronto"
     assert schedule.job_name == daily_pipeline.name
@@ -204,3 +206,44 @@ def test_breach_summary_lists_each_breach_with_its_runbook() -> None:
         "batch_volume / orders: 40 rows (target >= 50%); runbook docs/runbooks/b.md"
         in summary
     )
+
+
+def test_cdc_runs_on_its_own_schedule_not_in_the_daily_pipeline() -> None:
+    repo = defs.get_repository_def()
+    schedule = repo.get_schedule_def("cdc_load_schedule")
+    assert schedule.cron_schedule == "*/5 * * * *"
+    assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
+    daily = repo.get_job("daily_pipeline")
+    assert dg.AssetKey("cdc_changes") not in daily.asset_layer.selected_asset_keys
+    cdc = repo.get_job("cdc_load")
+    assert cdc.asset_layer.selected_asset_keys == {dg.AssetKey("cdc_changes")}
+
+
+def test_cdc_changes_reports_what_it_loaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cdc_consumer import BatchResult
+
+    calls = {}
+
+    def fake_run_once(bootstrap, database, max_events):
+        calls.update(bootstrap=bootstrap, database=database, max_events=max_events)
+        return [BatchResult("customers", "b1", 5, 4), BatchResult("orders", None, 0, 0)]
+
+    monkeypatch.setattr(definitions.cdc_consumer, "run_once", fake_run_once)
+    paths = WarehousePaths(raw_dir=str(tmp_path), database=str(tmp_path / "w.duckdb"))
+    result = dg.materialize(
+        [cdc_changes],
+        resources={"paths": paths, "cdc": CdcSettings(bootstrap="k:1", max_events=10)},
+        instance=dg.DagsterInstance.ephemeral(),
+    )
+    assert result.success
+    [event] = result.get_asset_materialization_events()
+    metadata = {k: v.value for k, v in event.materialization.metadata.items()}
+    assert metadata["rows_loaded"] == 4 and metadata["events_read"] == 5
+    assert metadata["rows_customers"] == 4
+    assert calls == {
+        "bootstrap": "k:1",
+        "database": tmp_path / "w.duckdb",
+        "max_events": 10,
+    }

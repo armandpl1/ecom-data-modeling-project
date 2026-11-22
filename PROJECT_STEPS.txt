@@ -340,6 +340,37 @@ in IMPROVEMENTS.txt).
 
 ---
 
+## Step 13: Change data capture ✅
+
+**Goal:** stream changes from a source database into the raw layer, instead of
+nightly files.
+
+1. `cdc/docker-compose.yml`: PostgreSQL 16.6 (logical replication), Redpanda
+   v24.2.18 and Debezium Server 2.7.3, memory-capped. `make cdc-up` / `cdc-down`.
+2. `scripts/cdc_source.py`: replays the generator's history into typed
+   Postgres tables as real inserts, updates and deletes (`make cdc-replay`).
+3. `scripts/cdc_consumer.py`: maps Debezium events to the raw columns and
+   appends one batch per table per run; offsets are stored in the same DuckDB
+   transaction as the rows, so loading is exactly once (`make cdc-load`).
+4. `scripts/cdc_lag.py`: measures commit-to-raw lag.
+5. `batch_volume` in `scripts/check_slos.py` now compares file extracts only.
+6. Tests: event mapping, the dropped delete touch, crash before commit,
+   tombstone-only batches, replay order and SQL; 2 new SLO tests.
+7. Batches never end inside a source transaction (`trim_partial_transaction`).
+8. Additive schema changes: a new source column is added to raw as text and
+   logged in `raw._cdc_schema_changes`.
+9. Dagster: `cdc_changes` asset, `cdc_load` job, `cdc_schedule` every 5
+   minutes (stopped by default); `daily_pipeline` leaves it out.
+10. `scripts/check_cdc_e2e.py` (`make cdc-e2e`): CSV path vs CDC path on a
+    fresh stack, plus a schema change; `.github/workflows/cdc-e2e.yml` runs it
+    on CDC pull requests, weekly and by hand.
+
+**Check:** `make cdc-e2e`: 6 of 6 Gold tables identical, 21,234 raw rows for
+21,234 changes, a rerun loads nothing, `loyalty_tier` lands in raw and
+`dbt build` still passes (3 min 54 s on this laptop).
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in

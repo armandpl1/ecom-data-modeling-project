@@ -26,9 +26,23 @@ solution, and alternatives that were considered.
 | 11 | SQL is not linted                      | Low    | Small  | 11       |
 | 12 | SQL is tied to DuckDB                  | Low    | Medium | 12       |
 | 13 | Single-product orders only             | Low    | Small  | 13       |
+| 14 | File extracts only, no CDC (done)      | High   | Large  | 14       |
 
 Gaps 1 and 2 belong together: incremental models need a raw layer that
 keeps every load.
+
+---
+
+## 14. File extracts only, no change data capture
+
+**Status: done (Step 13 in PROJECT_STEPS.txt).** PostgreSQL -> Debezium
+Server -> Redpanda -> an exactly-once consumer into the raw layer. Gold from
+CDC matches Gold from the files. Also done: a Dagster job and schedule for
+the consumer, a CI workflow for the live stack (CDC changes, weekly, or by
+hand), additive schema changes, and batches that never split a transaction.
+Still open: a column type change at the source is not detected (raw is all
+text, so it loads, but a new column's values keep Debezium's encoding until
+it is given a kind in scripts/cdc_schema.py).
 
 ---
 
