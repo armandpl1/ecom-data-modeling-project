@@ -2,7 +2,8 @@
 """Load the raw CSV extracts into an append-only raw layer in DuckDB.
 
 Each extract in data/raw/ is appended to a table in the `raw` schema
-(raw.customers, raw.products, raw.orders, raw.subscriptions), with three
+(raw.customers, raw.products, raw.orders, raw.order_lines,
+raw.subscriptions), with three
 columns that say where every row came from:
 
     _ingested_at   when this loader inserted the row
@@ -33,7 +34,7 @@ from pathlib import Path
 
 import duckdb
 
-TABLES = ("customers", "products", "orders", "subscriptions")
+TABLES = ("customers", "products", "orders", "order_lines", "subscriptions")
 DEFAULT_RAW_DIR = Path("data/raw")
 DEFAULT_DATABASE = Path("ecom.duckdb")
 

@@ -2,8 +2,9 @@
 """Check that incremental runs give exactly the same Gold tables as a full refresh.
 
 Simulates two nightly loads by splitting the generated extracts on
-_loaded_at: rows loaded more than --batch2-days before the newest load go in
-batch 1, the rest in batch 2. Batch 2 therefore contains new changes, late
+_loaded_at, between two nightly batches: rows loaded up to noon of the
+day --batch2-days before the newest load go in batch 1, the rest in
+batch 2. Batch 2 therefore contains new changes, late
 arrivals and corrections to rows already loaded, like a real nightly file.
 
 Two warehouses are built from the same raw data:
@@ -55,7 +56,10 @@ def split_extracts(
         for _, data in rows.values()
         for r in data
     )
-    cutoff = newest - timedelta(days=batch2_days)
+    # Split between nightly batches (noon), never inside one night's batch
+    cutoff = datetime.combine(
+        (newest - timedelta(days=batch2_days)).date(), datetime.min.time()
+    ) + timedelta(hours=12)
     counts = {}
     for table, (header, data) in rows.items():
         batches = [

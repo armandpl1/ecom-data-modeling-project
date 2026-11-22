@@ -54,27 +54,18 @@ models:
                 values: [Apparel, Books, Electronics, Home, Outdoors]
 
   - name: stg_orders
-    description: Order status changes, typed. One row per order per change.
+    description: Order header changes, typed. One row per order per change.
     data_tests:
       - unique_combination_of_columns:
           arguments:
             combination_of_columns: [order_id, updated_at]
-      - expression_is_true:
-          arguments:
-            expression: "discount_pct between 0 and 1"
     columns:
       - name: order_id
         data_tests: [not_null]
       - name: customer_id
         data_tests: [not_null]
-      - name: product_id
-        data_tests: [not_null]
-      - name: quantity
-        data_tests: [not_null, not_negative]
-      - name: unit_price
-        data_tests: [not_null, not_negative]
       - name: order_total
-        description: Order total after discount. Must never be negative.
+        description: Order total after discount, the sum of its line totals. Must never be negative.
         data_tests: [not_null, not_negative]
       - name: order_status
         data_tests:
@@ -86,6 +77,40 @@ models:
           - accepted_values:
               arguments:
                 values: [card, paypal, apple_pay, gift_card]
+
+  - name: stg_order_lines
+    description: Order line changes, typed. One row per line per change.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [order_line_id, updated_at]
+      - expression_is_true:
+          arguments:
+            expression: "discount_pct between 0 and 1"
+      - expression_is_true:
+          arguments:
+            expression: "order_line_id = order_id || '-' || line_number"
+    columns:
+      - name: order_line_id
+        data_tests: [not_null]
+      - name: order_id
+        data_tests: [not_null]
+      - name: line_number
+        data_tests: [not_null, not_negative]
+      - name: product_id
+        data_tests: [not_null]
+      - name: quantity
+        data_tests: [not_null, not_negative]
+      - name: unit_price
+        data_tests: [not_null, not_negative]
+      - name: line_total
+        description: quantity × unit_price × (1 − discount_pct), rounded to the cent.
+        data_tests: [not_null, not_negative]
+      - name: line_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [active, returned]
 
   - name: stg_subscriptions
     description: Subscription changes, typed. Dates without a time are named *_on.

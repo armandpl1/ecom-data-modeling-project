@@ -375,10 +375,10 @@ models:
     config:
       contract: {enforced: true}
     description: >
-      Order line fact. Grain: one row per order line. The source sells one
-      product per order, so order_line_number is always 1. Each row reflects
-      the order's latest known state; customer_sk and product_sk point to the
-      dimension versions valid when the order was placed.
+      Order line fact. Grain: one row per order line (1-5 lines per order).
+      Each row reflects the line's and the order's latest known state;
+      customer_sk and product_sk point to the dimension versions valid when
+      the order was placed. For order-level totals use fact_order_headers.
     data_tests:
       - unique_combination_of_columns:
           arguments:
@@ -483,7 +483,7 @@ models:
         data_tests: [not_negative]
       - name: returned_revenue
         data_type: decimal(12,2)
-        description: net_revenue if the order was returned, else 0. Additive.
+        description: net_revenue if the whole order or this line was returned (and not cancelled), else 0. Additive.
         data_tests: [not_negative]
       - name: recognized_revenue
         data_type: decimal(12,2)
@@ -504,7 +504,7 @@ models:
         description: Non-additive.
       - name: order_line_number
         data_type: integer
-        description: 'Line number within the order (always 1 in this source).'
+        description: 'Line number within the order, from 1.'
       - name: customer_id
         data_type: varchar
         description: 'Natural key of the customer.'
@@ -540,7 +540,7 @@ models:
         description: 'When the order was cancelled.'
       - name: returned_at
         data_type: timestamp
-        description: 'When the order was returned.'
+        description: 'When the whole order, or this line on its own, was returned.'
       - name: last_updated_at
         data_type: timestamp
         description: 'Time of the latest change to the order.'
@@ -552,7 +552,134 @@ models:
         description: 'Latest status is cancelled.'
       - name: is_returned
         data_type: boolean
-        description: 'Latest status is returned.'
+        description: 'The whole order was returned, or this line was.'
+      - name: is_line_returned
+        data_type: boolean
+        description: 'This line was returned on its own (the order was kept).'
+
+  - name: fact_order_headers
+    config:
+      contract: {enforced: true}
+    description: >
+      Order fact at the order grain. Grain: one row per order, including
+      orders whose lines haven't loaded yet (has_lines = false, line
+      measures 0). Line measures are sums over fact_orders; order_total is
+      the header's own total, and assert_order_lines_reconcile_to_header
+      checks that the lines add up to it.
+    data_tests:
+      - expression_is_true:
+          arguments:
+            expression: "abs(net_revenue - cancelled_revenue - returned_revenue - recognized_revenue) < 0.01"
+      - expression_is_true:
+          arguments:
+            expression: "returned_lines <= line_count"
+    columns:
+      - name: order_id
+        data_type: varchar
+        description: The order (degenerate dimension).
+        data_tests: [unique, not_null]
+      - name: customer_sk
+        data_type: varchar
+        description: Customer version valid when the order was placed, or the unknown member.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_sk
+          - unknown_member_rows:
+              config:
+                severity: warn
+      - name: order_date_key
+        data_type: integer
+        description: '{{ doc("date_key") }} Order date.'
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: customer_id
+        data_type: varchar
+        description: Natural key of the customer.
+      - name: order_status
+        data_type: varchar
+        description: Latest order status.
+      - name: payment_method
+        data_type: varchar
+        description: How the order was paid.
+      - name: currency
+        data_type: varchar
+        description: Currency of the amounts.
+      - name: line_count
+        data_type: bigint
+        description: Lines on the order (0 while none has loaded).
+        data_tests: [not_null, not_negative]
+      - name: returned_lines
+        data_type: bigint
+        description: Lines returned on their own.
+        data_tests: [not_null, not_negative]
+      - name: units
+        data_type: bigint
+        description: Sum of line quantities.
+        data_tests: [not_null, not_negative]
+      - name: gross_revenue
+        data_type: decimal(12,2)
+        description: Sum of line gross revenue. Additive.
+        data_tests: [not_null, not_negative]
+      - name: discount_amount
+        data_type: decimal(12,2)
+        description: Sum of line discounts. Additive.
+        data_tests: [not_null, not_negative]
+      - name: net_revenue
+        data_type: decimal(12,2)
+        description: Sum of line net revenue. Equals order_total when has_lines.
+        data_tests: [not_null, not_negative]
+      - name: cancelled_revenue
+        data_type: decimal(12,2)
+        description: Sum of line cancelled revenue. Additive.
+        data_tests: [not_null, not_negative]
+      - name: returned_revenue
+        data_type: decimal(12,2)
+        description: Sum of line returned revenue (whole-order and single-line returns). Additive.
+        data_tests: [not_null, not_negative]
+      - name: recognized_revenue
+        data_type: decimal(12,2)
+        description: Sum of line recognized revenue. Additive.
+        data_tests: [not_null, not_negative]
+      - name: order_total
+        data_type: decimal(12,2)
+        description: Total on the order header, after discounts.
+        data_tests: [not_null, not_negative]
+      - name: order_placed_at
+        data_type: timestamp
+        description: When the order was placed.
+        data_tests: [not_null]
+      - name: shipped_at
+        data_type: timestamp
+        description: First time the order reached shipped.
+      - name: delivered_at
+        data_type: timestamp
+        description: First time the order reached delivered.
+      - name: cancelled_at
+        data_type: timestamp
+        description: When the order was cancelled.
+      - name: returned_at
+        data_type: timestamp
+        description: When the whole order was returned.
+      - name: is_open
+        data_type: boolean
+        description: Still placed or shipped at the extract cutoff.
+      - name: is_cancelled
+        data_type: boolean
+        description: Latest status is cancelled.
+      - name: is_returned
+        data_type: boolean
+        description: The whole order was returned.
+      - name: has_lines
+        data_type: boolean
+        description: At least one line has loaded.
+        data_tests: [not_null]
 
   - name: fact_subscriptions
     config:

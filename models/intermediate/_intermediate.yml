@@ -80,24 +80,41 @@ models:
 
   - name: int_orders
     description: >
-      One row per order at its latest state, with the first time it reached
-      each status. Amounts reflect the latest version, so later corrections
-      and goodwill discounts are included.
+      One row per order header at its latest state, with the first time it
+      reached each status. order_total reflects the latest version, so later
+      corrections and goodwill discounts are included.
     columns:
       - name: order_id
         data_tests: [unique, not_null]
-      - name: net_amount
+      - name: order_total
         data_tests: [not_null, not_negative]
       - name: is_open
         description: Still placed or shipped at the extract cutoff.
 
+  - name: int_order_lines
+    description: >
+      One row per order line at its latest state (product, quantity, price,
+      discount), with the time it was returned if it was returned on its own.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [order_id, line_number]
+    columns:
+      - name: order_line_id
+        data_tests: [unique, not_null]
+      - name: net_amount
+        data_tests: [not_null, not_negative]
+
   - name: int_orders_enriched
     description: >
-      int_orders joined to the customer and product versions valid at
-      order_placed_at (point-in-time join on the SCD2 history).
+      One row per order line: int_order_lines joined to its int_orders header
+      and to the customer and product versions valid at order_placed_at
+      (point-in-time join on the SCD2 history).
     columns:
-      - name: order_id
+      - name: order_line_id
         data_tests: [unique, not_null]
+      - name: order_id
+        data_tests: [not_null]
       # Null when the order arrives before its customer or product version (an
       # early-arriving fact): a documented, self-healing gap, so it warns. Gold
       # points those rows to the unknown member and the next incremental run

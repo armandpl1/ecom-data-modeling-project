@@ -34,16 +34,25 @@ create table products (
 create table orders (
     order_id        text primary key,
     customer_id     text,
-    product_id      text,
-    quantity        integer,
-    unit_price      numeric(12, 2),
-    discount_pct    numeric(12, 2),
     order_total     numeric(12, 2),
     currency        text,
     payment_method  text,
     status          text,
     order_placed_at timestamp,
     updated_at      timestamp
+);
+
+create table order_lines (
+    order_line_id text primary key,
+    order_id      text,
+    line_number   integer,
+    product_id    text,
+    quantity      integer,
+    unit_price    numeric(12, 2),
+    discount_pct  numeric(12, 2),
+    line_total    numeric(12, 2),
+    line_status   text,
+    updated_at    timestamp
 );
 
 create table subscriptions (
@@ -63,9 +72,10 @@ create table subscriptions (
 alter table customers     replica identity full;
 alter table products      replica identity full;
 alter table orders        replica identity full;
+alter table order_lines   replica identity full;
 alter table subscriptions replica identity full;
 
--- How far the replay has got (not captured: Debezium only includes the four
+-- How far the replay has got (not captured: Debezium only includes the five
 -- tables above).
 create table _replay_state (
     id      integer primary key default 1 check (id = 1),

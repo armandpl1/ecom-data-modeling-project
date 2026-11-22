@@ -100,7 +100,7 @@ def test_raw_layer_loads_once_and_reruns_safely(tmp_path: Path) -> None:
     first = run()
     assert first["customers"]["new_load"] is True
     assert first["customers"]["rows_in_batch"] > 0
-    assert first["_load_log"]["new_batches"] == 4
+    assert first["_load_log"]["new_batches"] == 5  # one per extract
 
     second = run()  # same deterministic extracts: nothing new to load
     assert second["customers"]["new_load"] is False

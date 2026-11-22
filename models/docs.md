@@ -24,7 +24,7 @@ products one-off and through subscriptions.
 | `fact_subscription_mrr_monthly` | periodic snapshot | subscription × month |
 
 Open the lineage graph with the button at the bottom right to see how the
-four raw CSVs flow through each layer into these models.
+five raw CSVs flow through each layer into these models.
 
 ## Testing
 

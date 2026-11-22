@@ -23,6 +23,8 @@ tables:
   dim_product: {}
   fact_orders:
     partition_by: {column: order_placed_at, transform: month}
+  fact_order_headers:
+    partition_by: {column: order_placed_at, transform: month}
   fact_subscriptions: {}
   fact_subscription_mrr_monthly:
     partition_by: {column: month_start, transform: month}

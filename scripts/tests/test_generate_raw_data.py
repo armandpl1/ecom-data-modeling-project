@@ -7,10 +7,12 @@ import generate_raw_data
 # MD5 of each CSV written with the default arguments. The dbt models, tests and
 # README numbers all depend on this exact data, so any change to the
 # generator's output must be deliberate: update these hashes only when you
-# mean to change the data.
+# mean to change the data. (Multi-line orders, Step 19, changed orders.csv
+# and added order_lines.csv; the other three files kept their hashes.)
 DEFAULT_OUTPUT_MD5 = {
     "customers.csv": "ad6a8b7ef3ae05a26b2bdfd78136c7bb",
-    "orders.csv": "8cd81abcad7b206f96436fceafb94480",
+    "order_lines.csv": "3b6b511b11f35b5b060113c88d380e22",
+    "orders.csv": "01545a0e9e294f4f4da898e426606a73",
     "products.csv": "0c864d0958d279912e9db2a5ae1e4e7b",
     "subscriptions.csv": "f0d49a1a0cb46b89c05baed943fbd160",
 }

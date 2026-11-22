@@ -30,6 +30,7 @@ class History:
             late_rate: share of rows that load 1-14 days later than normal.
             dup_rate: share of rows delivered a second time.
         """
+        self.seed = seed
         self.rng = random.Random(seed)
         self.fake = Faker("en_US")
         self.fake.seed_instance(seed)
@@ -39,6 +40,20 @@ class History:
         self.as_of = datetime.combine(end + timedelta(days=1), time(3, 0))
         self.late_rate = late_rate
         self.dup_rate = dup_rate
+
+    def substream(self, offset: int) -> History:
+        """A History with the same dates and rates but its own random source.
+
+        Lets a generator add data (like extra order lines) without changing a
+        single draw from this History, so the other tables stay identical.
+        """
+        return History(
+            self.seed + offset,
+            self.start.date(),
+            self.end.date(),
+            self.late_rate,
+            self.dup_rate,
+        )
 
     def between(self, a: datetime, b: datetime) -> datetime:
         """Random timestamp between a and b. Returns a if the range is empty."""

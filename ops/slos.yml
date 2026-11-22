@@ -31,4 +31,5 @@ objectives:
     # Warnings that are documented, self-healing data gaps (see README).
     allowed_warnings:
       - delivered_orders_have_ship_event
+      - assert_order_headers_have_lines   # header loaded before its lines; heals next load
     runbook: docs/runbooks/dbt-tests.md

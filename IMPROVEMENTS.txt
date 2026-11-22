@@ -25,7 +25,7 @@ solution, and alternatives that were considered.
 | 10 | No monitoring or alerting (done)       | Medium | Medium | 10       |
 | 11 | SQL is not linted (done)               | Low    | Small  | 11       |
 | 12 | SQL is tied to DuckDB                  | Low    | Medium | 12       |
-| 13 | Single-product orders only             | Low    | Small  | 13       |
+| 13 | Single-product orders only (done)      | Low    | Small  | 13       |
 | 14 | File extracts only, no CDC (done)      | High   | Large  | 14       |
 | 15 | Gold readable by DuckDB only (done)    | Medium | Medium | 15       |
 
@@ -373,18 +373,12 @@ Snowflake or BigQuery would need rewrites.
 
 ## 13. Single-product orders only
 
-**Today:** the generator puts one product on each order, so fact_orders has
-one line per order. The model is keyed by line, but multi-line orders have
-never been tested.
-
-**Recommended solution:**
-
-1. Add an order_lines source to the generator, with 1–5 lines per order
-   and line-level discounts and returns.
-2. Build stg_order_lines and int_order_lines, then make fact_orders read
-   from lines. order_line_number becomes real.
-3. Add an order-level aggregate (fact_order_headers or a reporting mart),
-   and a test that line totals add up to the order total.
+**Status: done (Step 19 in PROJECT_STEPS.txt).** A new order_lines source
+(1-5 products per order, line discounts, single-line returns) on the file
+path and the CDC path; stg_order_lines, int_order_lines, a line-grain
+fact_orders and an order-grain fact_order_headers, with a test that the
+lines add up to the header total. Customers, products and subscriptions
+stayed byte-identical.
 
 ---
 

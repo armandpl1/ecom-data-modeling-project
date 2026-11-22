@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from raw_data.config import COLUMNS, ID_COLUMNS
 
-TABLES = ("customers", "products", "orders", "subscriptions")
+TABLES = ("customers", "products", "orders", "order_lines", "subscriptions")
 METADATA = ("_op", "_loaded_at")
 DATA_COLUMNS = {t: [c for c in COLUMNS[t] if c not in METADATA] for t in TABLES}
 KEYS = {t: ID_COLUMNS[t] for t in TABLES}
@@ -36,11 +36,16 @@ KINDS: dict[str, dict[str, str]] = {
         "updated_at": "timestamp",
     },
     "orders": {
+        "order_total": "numeric",
+        "order_placed_at": "timestamp",
+        "updated_at": "timestamp",
+    },
+    "order_lines": {
+        "line_number": "integer",
         "quantity": "integer",
         "unit_price": "numeric",
         "discount_pct": "numeric",
-        "order_total": "numeric",
-        "order_placed_at": "timestamp",
+        "line_total": "numeric",
         "updated_at": "timestamp",
     },
     "subscriptions": {

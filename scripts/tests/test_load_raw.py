@@ -26,10 +26,10 @@ def count(con: duckdb.DuckDBPyConnection, sql: str) -> int:
 def test_first_load_creates_tables_and_logs_each_batch(tmp_path: Path) -> None:
     write_extracts(tmp_path / "raw")
     results = load_all(tmp_path / "raw", tmp_path / "w.duckdb")
-    assert [r.loaded for r in results] == [True] * 4
+    assert [r.loaded for r in results] == [True] * len(TABLES)
     with duckdb.connect(str(tmp_path / "w.duckdb")) as con:
         assert count(con, "select count(*) from raw.customers") == 2
-        assert count(con, "select count(*) from raw._load_log") == 4
+        assert count(con, "select count(*) from raw._load_log") == len(TABLES)
         row = con.execute(
             "select _batch_id, _file_name, _ingested_at is not null "
             "from raw.orders limit 1"
@@ -42,10 +42,10 @@ def test_rerun_skips_files_already_loaded(tmp_path: Path) -> None:
     write_extracts(tmp_path / "raw")
     load_all(tmp_path / "raw", tmp_path / "w.duckdb")
     again = load_all(tmp_path / "raw", tmp_path / "w.duckdb")
-    assert [r.loaded for r in again] == [False] * 4
+    assert [r.loaded for r in again] == [False] * len(TABLES)
     with duckdb.connect(str(tmp_path / "w.duckdb")) as con:
         assert count(con, "select count(*) from raw.customers") == 2
-        assert count(con, "select count(*) from raw._load_log") == 4
+        assert count(con, "select count(*) from raw._load_log") == len(TABLES)
 
 
 def test_a_new_extract_is_appended_not_replaced(tmp_path: Path) -> None:
@@ -85,7 +85,7 @@ def test_a_failed_load_leaves_no_partial_batch(tmp_path: Path) -> None:
         with pytest.raises(duckdb.Error):
             load_file(con, "customers", raw / "customers.csv")
         assert count(con, "select count(*) from raw.customers") == 2
-        assert count(con, "select count(*) from raw._load_log") == 4
+        assert count(con, "select count(*) from raw._load_log") == len(TABLES)
 
 
 def test_missing_extracts_fail_with_a_clear_message(tmp_path: Path) -> None:

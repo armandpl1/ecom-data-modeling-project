@@ -47,7 +47,7 @@ sources:
                     values: [I, U, D]
 
       - name: orders
-        description: Order status changes. One product per order.
+        description: Order header changes (status, payment, total). The products are in order_lines.
         columns:
           - name: order_id
             data_tests: [not_null]
@@ -73,11 +73,29 @@ sources:
             data_tests:
               - accepted_values:
                   arguments:
-                    values: [customers, products, orders, subscriptions]
+                    values: [customers, products, orders, order_lines, subscriptions]
           - name: sha256
             data_tests: [not_null]
           - name: row_count
             data_tests: [not_null]
+
+      - name: order_lines
+        description: >
+          Order line changes: one product per line, 1-5 lines per order,
+          loaded with the header change they belong to. A line can be
+          returned on its own (line_status = returned).
+        columns:
+          - name: order_line_id
+            data_tests: [not_null]
+          - name: order_id
+            data_tests: [not_null]
+          - name: updated_at
+            data_tests: [not_null]
+          - name: _op
+            data_tests:
+              - accepted_values:
+                  arguments:
+                    values: [I, U, D]
 
       - name: subscriptions
         description: Subscription changes (plan, status, MRR).
