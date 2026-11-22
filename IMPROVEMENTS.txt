@@ -28,9 +28,21 @@ solution, and alternatives that were considered.
 | 13 | Single-product orders only (done)      | Low    | Small  | 13       |
 | 14 | File extracts only, no CDC (done)      | High   | Large  | 14       |
 | 15 | Gold readable by DuckDB only (done)    | Medium | Medium | 15       |
+| 16 | No infrastructure as code (done)       | Medium | Medium | 16       |
 
 Gaps 1 and 2 belong together: incremental models need a raw layer that
 keeps every load.
+
+---
+
+## 16. No infrastructure as code
+
+**Status: done (Step 20 in PROJECT_STEPS.txt).** Terraform for the S3
+buckets, KMS key and pipeline IAM role, applied to the Moto AWS emulator in
+CI and checked (security scan, clean second plan, least-privilege check).
+Still open: the Iceberg tables are not yet written to the lakehouse bucket
+(next: a REST catalog on S3, read by Trino), and the state is local rather
+than in a locked remote backend.
 
 ---
 

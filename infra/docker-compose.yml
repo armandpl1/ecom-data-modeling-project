@@ -1,0 +1,17 @@
+# Local AWS for the Terraform in infra/terraform: Moto, an open-source AWS
+# emulator (S3, IAM, STS). No account or credentials needed.
+name: ecom-aws
+
+services:
+  moto:
+    image: motoserver/moto:5.2.5
+    ports:
+      - "15000:5000"
+    environment:
+      MOTO_PORT: "5000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/moto-api/')"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    mem_limit: 512m

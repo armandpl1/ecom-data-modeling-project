@@ -4,7 +4,7 @@
 export UV_PROJECT_ENVIRONMENT := deenv
 RUN := uv run
 
-.PHONY: help install hooks lint test data load build check-slos prod-state slim-build check-incremental check-late-dimensions iceberg check-iceberg pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag cdc-e2e
+.PHONY: help install hooks lint test data load build check-slos infra-up infra-plan infra-check upload-extracts infra-down prod-state slim-build check-incremental check-late-dimensions iceberg check-iceberg pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag cdc-e2e
 
 help:  ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -92,6 +92,31 @@ slim-build:  ## Build only models changed since prod-state/, reading the rest fr
 	rm -f target/ci.duckdb
 	uv run python scripts/load_raw.py --database target/ci.duckdb
 	uv run dbt build --target ci --select state:modified+ --defer --state prod-state
+
+TF := terraform -chdir=infra/terraform
+AWS_LOCAL := docker compose -f infra/docker-compose.yml
+
+infra-up:  ## Start the AWS emulator (Moto) and apply infra/terraform; a second plan must show no changes
+	$(AWS_LOCAL) up -d --wait
+	$(TF) init -input=false
+	$(TF) apply -auto-approve -input=false
+	# Moto ignores tags sent with CreateBucket; a second apply sets them the normal way
+	$(TF) apply -auto-approve -input=false
+	$(TF) plan -detailed-exitcode -input=false
+
+infra-plan:  ## Show what Terraform would change (exit 2 means drift)
+	$(TF) plan -detailed-exitcode -input=false
+
+infra-check:  ## Check the buckets and IAM role are safe (versioning, encryption, private, least privilege)
+	uv run python scripts/check_infra.py
+
+upload-extracts:  ## Upload data/raw/*.csv to the raw bucket, content-addressed (reruns upload nothing)
+	uv run python scripts/upload_extracts.py
+
+infra-down:  ## Stop the emulator (its data is wiped) and forget the local Terraform state
+	# Not `terraform destroy`: it rightly refuses to delete buckets that hold data
+	$(AWS_LOCAL) down -v
+	rm -f infra/terraform/terraform.tfstate infra/terraform/terraform.tfstate.backup
 
 check-incremental:  ## Prove incremental runs give the same Gold tables as a full refresh
 	$(RUN) python scripts/check_incremental.py

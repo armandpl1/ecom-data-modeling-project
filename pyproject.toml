@@ -5,6 +5,7 @@ description = "Data modeling project for a fictional e-commerce business, built 
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "boto3>=1.44.9",
     "confluent-kafka>=2.16.2",
     "dagster>=1.13.31",
     "dagster-dbt>=0.29.31",
@@ -23,6 +24,7 @@ dev = [
     "black>=26.10.1",
     "dagster-webserver>=1.13.31",
     "flake8>=7.5.0",
+    "moto[iam,s3]>=5.2.5",
     "pre-commit>=4.7.0",
     "pytest>=9.2.0",
     "ruff>=0.17.4",

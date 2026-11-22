@@ -27,3 +27,9 @@ prod-state/
 
 # Temporary Dagster home created by `dagster job execute` without DAGSTER_HOME
 .tmp_dagster_home_*/
+
+# Terraform working files and local state (the lock file is committed)
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/*.tfplan

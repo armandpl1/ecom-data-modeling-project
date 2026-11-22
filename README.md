@@ -449,6 +449,52 @@ partitioning, reruns, time travel, schema evolution and widening, the guard
 blocking a dropped column and a type change, snapshot expiry, and the
 publish ids.
 
+## Infrastructure as code (Terraform)
+
+`infra/terraform/` defines the AWS resources the pipeline would run on:
+
+| Resource                                | Settings                                                                                 |
+| --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `ecom-dev-raw` bucket                   | Nightly extracts. Versioned, KMS-encrypted, private, access-logged, old versions expire  |
+| `ecom-dev-lakehouse` bucket             | Iceberg tables. Versioned, KMS-encrypted, private, access-logged                         |
+| `ecom-dev-access-logs` bucket           | Receives the access logs; a bucket policy lets only the S3 logging service write to it   |
+| KMS key `alias/ecom-dev-data`           | Customer-managed, rotation on                                                            |
+| IAM role `ecom-dev-pipeline` and policy | Least privilege: list the two buckets, write raw, read/write lakehouse, use the key only |
+
+It runs against **Moto**, an open-source AWS emulator in Docker
+(`infra/docker-compose.yml`), so no AWS account or credentials are needed.
+(LocalStack, the usual choice, now refuses to start without an account.)
+Setting `use_emulator = false` points the same code at a real account.
+
+```bash
+make infra-up         # start Moto, terraform init + apply; a second plan must show no changes
+make infra-check      # read the resources back: versioned, KMS-encrypted, private, logged, least privilege
+make upload-extracts  # copy data/raw/*.csv to the raw bucket, content-addressed (reruns upload nothing)
+make infra-plan       # exit 2 means something drifted from the code
+make infra-down       # stop the emulator and forget the local state
+```
+
+- **Checked like code:** CI's `terraform` job runs `fmt -check`, `validate`,
+  a Trivy security scan that fails on any finding, an apply to Moto, a
+  second plan that must show no changes, `check_infra.py`, and two uploads
+  (the second must upload nothing). It isn't a required check.
+- **Security scan:** the first Trivy run flagged AWS-managed encryption
+  (high) and no access logging (low). Both were fixed (a customer-managed
+  key, a log bucket) instead of suppressed; the log bucket itself is not
+  logged, which would loop, and is the one documented exception.
+- **Drift detection, measured:** after turning off versioning and the public
+  access block on the raw bucket by hand, `check_infra.py` named both
+  problems, `terraform plan` showed exactly those two resources changing,
+  and one `apply` restored them.
+- **Idempotent uploads:** objects are keyed by the file's SHA-256
+  (`extracts/<table>/<sha256 prefix>.csv`), with the full checksum, table
+  and file name as metadata, so a rerun uploads nothing and a changed file
+  becomes a new object.
+- **Emulator caveats:** Moto ignores tags sent with `CreateBucket`, so
+  `make infra-up` applies twice (the second apply sets the tags the usual
+  way). State is local here; a real account would use an S3 backend with
+  locking (commented in `versions.tf`).
+
 ## The raw data
 
 Each file is an append-only extract, as if copied nightly from the source system. Every change to a record is a **new row**; nothing is edited in place. To get the current state of a record you have to pick its latest version.
@@ -1014,6 +1060,7 @@ test ──┘
 | `test`        | `pytest` for the data generator; JUnit report uploaded                                                                                                                                                          | `dbt`                  |
 | `dbt`         | Generate data, load the raw layer, `dbt parse`, `dbt build` (all models, data and unit tests), the Iceberg publish and check, the incremental-vs-full-refresh check, the Dagster pipeline end to end, docs site | `deploy-docs`          |
 | `slim`        | Pull requests only: `dbt build --select state:modified+ --defer` against the prod warehouse built on `main` (see Environments below)                                                                            | nothing (not required) |
+| `terraform`   | `infra/terraform`: fmt, validate, Trivy scan, apply to the Moto emulator, a clean second plan, `check_infra.py`, idempotent uploads                                                                             | nothing (not required) |
 | `deploy-docs` | Publishes the dbt docs site to GitHub Pages. Only on `main`, only after every job passes                                                                                                                        | (deploys)              |
 
 **Environments and slim CI.** `profiles.yml` has three targets:
@@ -1075,6 +1122,7 @@ make pipeline  # the same, orchestrated by Dagster
 make check-incremental  # incremental runs vs a full refresh: Gold must be identical
 make prod-state         # build a local prod warehouse and manifest (what CI does on main)
 make slim-build         # build only what changed since prod-state/, deferring to prod
+make infra-up           # Terraform on an AWS emulator (then make infra-check)
 make check-late-dimensions  # early-arriving facts: unknown member, warning, then re-pointed
 make check-slos         # service-level objectives; each breach names its runbook
 make metrics            # validate the semantic layer and export dashboard datasets
@@ -1188,6 +1236,10 @@ scripts/cdc_lag.py             measures commit-to-raw lag
 scripts/publish_iceberg.py     publishes Gold as Apache Iceberg tables, with a schema guard
 scripts/check_iceberg.py       proves the Iceberg tables match Gold
 ops/lakehouse.yml              Iceberg warehouse, catalog, partitions and snapshot retention
+infra/terraform/               Terraform: S3 buckets, KMS key, pipeline IAM role (AWS emulator by default)
+infra/docker-compose.yml       Moto, the AWS emulator the Terraform is applied to
+scripts/check_infra.py         checks the AWS resources are safe and least privilege
+scripts/upload_extracts.py     uploads the extracts to the raw bucket, content-addressed
 cdc/                           Docker Compose stack, Postgres schema, Debezium Server config
 models/semantic/               semantic models, metrics and the dashboard exposure
 dashboard/                     Evidence dashboard over the semantic-layer metrics
