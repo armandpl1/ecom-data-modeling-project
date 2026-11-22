@@ -29,9 +29,21 @@ solution, and alternatives that were considered.
 | 14 | File extracts only, no CDC (done)      | High   | Large  | 14       |
 | 15 | Gold readable by DuckDB only (done)    | Medium | Medium | 15       |
 | 16 | No infrastructure as code (done)       | Medium | Medium | 16       |
+| 17 | Dagster only, no Airflow (done)        | Low    | Medium | 17       |
 
 Gaps 1 and 2 belong together: incremental models need a raw layer that
 keeps every load.
+
+---
+
+## 17. Dagster only, no Airflow
+
+**Status: done (Step 21 in PROJECT_STEPS.txt).** The same daily pipeline as
+an Airflow 3 DAG, dbt rendered as one task per model by Astronomer Cosmos,
+in its own environment, tested and run in CI. Still open: Airflow runs
+locally with SQLite and the sequential `dags test` runner; a deployment
+would use Postgres, a real executor (Celery or Kubernetes) and the manifest
+built in CI.
 
 ---
 

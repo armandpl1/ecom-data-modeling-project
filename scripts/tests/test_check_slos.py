@@ -214,3 +214,18 @@ def test_cli_exit_codes_and_json(
 
     assert main(["--database", str(db), "--run-results", str(tmp_path / "x.json")]) == 1
     assert main(["--database", str(tmp_path / "missing.duckdb")]) == 2
+
+
+def test_skipped_objectives_are_left_out(tmp_path: Path) -> None:
+    db = make_warehouse(tmp_path / "w.duckdb")
+    missing = tmp_path / "no_run_results.json"  # an orchestrator without one
+    assert evaluate(db, missing, CONFIG)["breached"] == 1  # dbt_tests: no results
+    report = evaluate(db, missing, CONFIG, skip=("dbt_tests",))
+    assert report["breached"] == 0
+    assert {r["objective"] for r in report["results"]} == {
+        "raw_freshness",
+        "batch_volume",
+        "warehouse_caught_up",
+    }
+    with pytest.raises(ValueError, match="unknown objectives"):
+        evaluate(db, missing, CONFIG, skip=("typo",))

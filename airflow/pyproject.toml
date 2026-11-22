@@ -1,0 +1,17 @@
+[project]
+name = "ecom-airflow"
+version = "0.1.0"
+description = "Airflow version of the ecom daily pipeline (Dagster stays the main orchestrator)."
+requires-python = ">=3.11,<3.12"
+# Airflow pins many packages, so it gets its own environment. The DAG calls the
+# main project's scripts and dbt through `uv run` and ../deenv, never imports them.
+dependencies = [
+    "apache-airflow==3.3.2",
+    "astronomer-cosmos==1.15.1",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.2.0"]
+
+[tool.uv]
+package = false
