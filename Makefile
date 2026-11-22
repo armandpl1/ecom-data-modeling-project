@@ -4,7 +4,7 @@
 export UV_PROJECT_ENVIRONMENT := deenv
 RUN := uv run
 
-.PHONY: help install hooks lint test data load build check-slos check-incremental pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag
+.PHONY: help install hooks lint test data load build check-slos check-incremental pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag cdc-e2e
 
 help:  ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -64,6 +64,11 @@ cdc-replay:  ## Replay the change history into the CDC source Postgres (UNTIL=YY
 
 cdc-load:  ## Load new change events from Redpanda into the raw layer (exactly once)
 	$(RUN) python scripts/cdc_consumer.py
+
+cdc-e2e:  ## Full CDC check on a fresh stack: Gold equals the CSV path, exactly once, schema change
+	$(CDC) down -v
+	$(CDC) up -d --wait
+	$(RUN) python scripts/check_cdc_e2e.py --json target/cdc_e2e_report.json
 
 cdc-lag:  ## Measure commit-to-raw lag (run the consumer with --follow meanwhile; DB=path)
 	$(RUN) python scripts/cdc_lag.py --database $(or $(DB),ecom.duckdb)

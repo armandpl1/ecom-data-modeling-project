@@ -37,9 +37,12 @@ keeps every load.
 
 **Status: done (Step 13 in PROJECT_STEPS.txt).** PostgreSQL -> Debezium
 Server -> Redpanda -> an exactly-once consumer into the raw layer. Gold from
-CDC matches Gold from the files. Not done yet: a Dagster sensor that runs
-the consumer, a CI job for the live stack (about 2.5 GB of images), and
-schema-change handling (a new source column needs a raw column first).
+CDC matches Gold from the files. Also done: a Dagster job and schedule for
+the consumer, a CI workflow for the live stack (CDC changes, weekly, or by
+hand), additive schema changes, and batches that never split a transaction.
+Still open: a column type change at the source is not detected (raw is all
+text, so it loads, but a new column's values keep Debezium's encoding until
+it is given a kind in scripts/cdc_schema.py).
 
 ---
 

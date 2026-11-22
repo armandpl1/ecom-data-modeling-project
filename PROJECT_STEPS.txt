@@ -356,9 +356,18 @@ nightly files.
 5. `batch_volume` in `scripts/check_slos.py` now compares file extracts only.
 6. Tests: event mapping, the dropped delete touch, crash before commit,
    tombstone-only batches, replay order and SQL; 2 new SLO tests.
+7. Batches never end inside a source transaction (`trim_partial_transaction`).
+8. Additive schema changes: a new source column is added to raw as text and
+   logged in `raw._cdc_schema_changes`.
+9. Dagster: `cdc_changes` asset, `cdc_load` job, `cdc_schedule` every 5
+   minutes (stopped by default); `daily_pipeline` leaves it out.
+10. `scripts/check_cdc_e2e.py` (`make cdc-e2e`): CSV path vs CDC path on a
+    fresh stack, plus a schema change; `.github/workflows/cdc-e2e.yml` runs it
+    on CDC pull requests, weekly and by hand.
 
-**Check:** `make cdc-up cdc-replay cdc-load`, then `dbt build`: PASS=176,
-WARN=1. Raw rows = 21,234 = the number of changes. Gold matches the CSV path.
+**Check:** `make cdc-e2e`: 6 of 6 Gold tables identical, 21,234 raw rows for
+21,234 changes, a rerun loads nothing, `loyalty_tier` lands in raw and
+`dbt build` still passes (3 min 54 s on this laptop).
 
 ---
 

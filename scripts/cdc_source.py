@@ -33,14 +33,17 @@ import argparse
 import logging
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, time as dtime
+from datetime import date, datetime
+from datetime import time as dtime
 
 import generate_raw_data
-from cdc_schema import DATA_COLUMNS, KEYS, TABLES, kind
+from cdc_schema import DATA_COLUMNS, KEYS, kind
 from raw_data.writer import fmt
 
 DEFAULT_DSN = "host=localhost port=15432 dbname=source user=ecom password=ecom"
-TABLE_RANK = {t: i for i, t in enumerate(("products", "customers", "subscriptions", "orders"))}
+TABLE_RANK = {
+    t: i for i, t in enumerate(("products", "customers", "subscriptions", "orders"))
+}
 
 log = logging.getLogger("cdc_source")
 
@@ -144,7 +147,9 @@ def replay(conn, changes: list[Change], until: date | None, limit: int | None) -
                     upserted += 1
                 elif change.op == "D" and cur.rowcount == 0:
                     missing += 1  # delete of a row that isn't there
-            cur.execute("update _replay_state set applied = %s where id = 1", [applied + 1])
+            cur.execute(
+                "update _replay_state set applied = %s where id = 1", [applied + 1]
+            )
         applied += 1
     seconds = time.perf_counter() - began
     return {

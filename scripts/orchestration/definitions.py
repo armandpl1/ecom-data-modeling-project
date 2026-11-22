@@ -14,6 +14,11 @@
   becomes an asset check.
 - daily_pipeline materializes everything; daily_schedule runs it at 06:00
   Toronto time (stopped by default, so nothing runs unless you turn it on).
+- cdc_changes loads new change events from Redpanda into the same raw
+  tables (scripts/cdc_consumer.py, exactly once). It has its own job,
+  cdc_load, run every 5 minutes by cdc_schedule (stopped by default: it
+  needs the CDC stack, `make cdc-up`). daily_pipeline leaves it out, so the
+  file path still runs without Docker.
 - alert_on_failure fires when a run fails: it logs the error and, if
   ALERT_WEBHOOK_URL is set, posts it to that Slack-compatible webhook.
 
@@ -28,6 +33,7 @@ import os
 import urllib.request
 from pathlib import Path
 
+import cdc_consumer
 import check_slos
 import dagster as dg
 import generate_raw_data
@@ -150,9 +156,50 @@ def service_levels(paths: WarehousePaths) -> dg.MaterializeResult:
     return dg.MaterializeResult(metadata=metadata)
 
 
+CDC_GROUP = "cdc"
+
+
+class CdcSettings(dg.ConfigurableResource):
+    """Where the CDC consumer reads change events from."""
+
+    bootstrap: str = os.environ.get("CDC_BOOTSTRAP", cdc_consumer.DEFAULT_BOOTSTRAP)
+    max_events: int | None = None
+
+
+@dg.asset(
+    group_name=CDC_GROUP,
+    description=(
+        "Change events from Postgres (Debezium -> Redpanda) appended to the raw "
+        "tables, exactly once. Needs the CDC stack: make cdc-up."
+    ),
+)
+def cdc_changes(paths: WarehousePaths, cdc: CdcSettings) -> dg.MaterializeResult:
+    results = cdc_consumer.run_once(cdc.bootstrap, Path(paths.database), cdc.max_events)
+    return dg.MaterializeResult(
+        metadata={
+            "rows_loaded": sum(r.rows for r in results),
+            "events_read": sum(r.events for r in results),
+            **{f"rows_{r.table}": r.rows for r in results},
+        }
+    )
+
+
+cdc_load = dg.define_asset_job(
+    "cdc_load",
+    selection=dg.AssetSelection.groups(CDC_GROUP),
+    description="Load new change events from Redpanda into the raw layer.",
+)
+
+cdc_schedule = dg.ScheduleDefinition(
+    job=cdc_load,
+    cron_schedule="*/5 * * * *",
+    execution_timezone="America/Toronto",
+    default_status=dg.DefaultScheduleStatus.STOPPED,
+)
+
 daily_pipeline = dg.define_asset_job(
     "daily_pipeline",
-    selection=dg.AssetSelection.all(),
+    selection=dg.AssetSelection.all() - dg.AssetSelection.groups(CDC_GROUP),
     description=(
         "Generate extracts, load the raw layer, dbt build with all tests, then "
         "check the service-level objectives."
@@ -187,7 +234,7 @@ def failure_message(job_name: str, run_id: str, error: str | None) -> str:
 
 
 @dg.run_failure_sensor(
-    monitored_jobs=[daily_pipeline],
+    monitored_jobs=[daily_pipeline, cdc_load],
     default_status=dg.DefaultSensorStatus.RUNNING,
     description="Logs every failed run and posts it to ALERT_WEBHOOK_URL if set.",
 )
@@ -203,12 +250,13 @@ def alert_on_failure(context: dg.RunFailureSensorContext) -> None:
 
 
 defs = dg.Definitions(
-    assets=[source_extracts, raw_layer, dbt_models, service_levels],
-    jobs=[daily_pipeline],
-    schedules=[daily_schedule],
+    assets=[source_extracts, raw_layer, dbt_models, service_levels, cdc_changes],
+    jobs=[daily_pipeline, cdc_load],
+    schedules=[daily_schedule, cdc_schedule],
     sensors=[alert_on_failure],
     resources={
         "dbt": DbtCliResource(project_dir=dbt_project, profiles_dir=str(ROOT)),
         "paths": WarehousePaths(),
+        "cdc": CdcSettings(),
     },
 )

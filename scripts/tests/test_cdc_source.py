@@ -36,7 +36,9 @@ def test_deletes_only_follow_an_insert(changes: list[Change]) -> None:
 def test_a_correction_follows_the_value_it_fixes(changes: list[Change]) -> None:
     by_key_time: dict[tuple, list[Change]] = {}
     for c in changes:
-        by_key_time.setdefault((c.table, c.row[KEYS[c.table]], c.updated_at), []).append(c)
+        by_key_time.setdefault(
+            (c.table, c.row[KEYS[c.table]], c.updated_at), []
+        ).append(c)
     pairs = [group for group in by_key_time.values() if len(group) > 1]
     for group in pairs:
         loaded = [c.loaded_at for c in group]

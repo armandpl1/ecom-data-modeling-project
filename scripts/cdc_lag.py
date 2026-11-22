@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 import statistics
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
@@ -31,7 +31,9 @@ def make_changes(dsn: str, n: int, rate: float, run_id: str) -> list[str]:
 
     emails = []
     with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
-        cur.execute("select customer_id from customers order by customer_id limit %s", [n])
+        cur.execute(
+            "select customer_id from customers order by customer_id limit %s", [n]
+        )
         ids = [r[0] for r in cur.fetchall()]
         for i, customer_id in enumerate(ids):
             email = f"{MARKER}-{run_id}-{i}@example.com"
@@ -64,7 +66,8 @@ def lags_seconds(database: Path, emails: list[str], wait: float) -> list[float]:
             break
         time.sleep(1)
     return [
-        ((ingested - utc_offset) - committed).total_seconds() for committed, ingested in rows
+        ((ingested - utc_offset) - committed).total_seconds()
+        for committed, ingested in rows
     ]
 
 
@@ -79,10 +82,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--database", type=Path, required=True)
     parser.add_argument("--changes", type=int, default=200)
     parser.add_argument("--rate", type=float, default=10.0, help="changes per second")
-    parser.add_argument("--wait", type=float, default=60.0, help="seconds to wait at the end")
+    parser.add_argument(
+        "--wait", type=float, default=60.0, help="seconds to wait at the end"
+    )
     args = parser.parse_args(argv)
 
-    run_id = datetime.now(timezone.utc).strftime("%H%M%S")
+    run_id = datetime.now(UTC).strftime("%H%M%S")
     emails = make_changes(args.dsn, args.changes, args.rate, run_id)
     lags = lags_seconds(args.database, emails, args.wait)
     if not lags:

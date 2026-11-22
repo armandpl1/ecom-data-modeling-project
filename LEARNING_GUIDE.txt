@@ -25,6 +25,7 @@ Run:
     make metrics                          # optional: business metrics from the semantic layer
     make check-incremental                # optional: incremental runs vs a full refresh
     make cdc-up cdc-replay cdc-load       # optional: the same data via Postgres CDC (Docker, ~2.5 GB)
+    make cdc-e2e                          # optional: check CDC Gold equals the CSV path (~4 min)
     dbt build                             # builds every model and runs every test
     pytest                                # tests for the data generator
 

@@ -14,6 +14,7 @@ from cdc_consumer import (
     ensure_tables,
     format_value,
     map_event,
+    trim_partial_transaction,
     write_batch,
 )
 
@@ -118,7 +119,9 @@ def test_a_crash_before_commit_leaves_nothing(tmp_path: Path) -> None:
     with duckdb.connect(str(tmp_path / "w.duckdb")) as con:
         ensure_tables(con, "customers")
         with pytest.raises(RuntimeError, match="simulated crash"):
-            write_batch(con, "customers", events(3), {0: (0, 3)}, fail_before_commit=True)
+            write_batch(
+                con, "customers", events(3), {0: (0, 3)}, fail_before_commit=True
+            )
         assert con.execute("select count(*) from raw.customers").fetchone()[0] == 0
         assert con.execute("select count(*) from raw._load_log").fetchone()[0] == 0
         assert con.execute("select count(*) from raw._cdc_offsets").fetchone()[0] == 0
@@ -127,11 +130,76 @@ def test_a_crash_before_commit_leaves_nothing(tmp_path: Path) -> None:
         assert con.execute("select count(*) from raw.customers").fetchone()[0] == 3
 
 
-def test_tombstone_only_batch_advances_offsets_without_a_log_row(tmp_path: Path) -> None:
+def test_tombstone_only_batch_advances_offsets_without_a_log_row(
+    tmp_path: Path,
+) -> None:
     with duckdb.connect(str(tmp_path / "w.duckdb")) as con:
         ensure_tables(con, "customers")
         tombstones = [Event(5, None, None), Event(6, None, None)]
         result = write_batch(con, "customers", tombstones, {0: (5, 7)})
         assert (result.rows, result.batch_id) == (0, None)
         assert con.execute("select count(*) from raw._load_log").fetchone()[0] == 0
-        assert con.execute("select next_offset from raw._cdc_offsets").fetchone()[0] == 7
+        assert (
+            con.execute("select next_offset from raw._cdc_offsets").fetchone()[0] == 7
+        )
+
+
+def tx_events(txs: list[int]) -> list[Event]:
+    return [
+        map_event("customers", i, envelope("u", after=customer(), tx=tx))
+        for i, tx in enumerate(txs)
+    ]
+
+
+def test_a_capped_batch_stops_at_the_last_whole_transaction() -> None:
+    # tx 3 is a touch-update + delete; the cap fell between them
+    kept = trim_partial_transaction(tx_events([1, 2, 3]))
+    assert [e.offset for e in kept] == [0, 1]
+
+
+def test_a_transaction_larger_than_the_batch_is_kept_whole() -> None:
+    kept = trim_partial_transaction(tx_events([4, 4, 4]))
+    assert [e.offset for e in kept] == [0, 1, 2]
+
+
+def test_tombstones_at_the_end_are_not_trimmed() -> None:
+    batch = [*tx_events([1, 2]), Event(2, None, None)]
+    assert trim_partial_transaction(batch) == batch
+
+
+def test_a_column_added_at_the_source_is_kept(tmp_path: Path) -> None:
+    with duckdb.connect(str(tmp_path / "w.duckdb")) as con:
+        ensure_tables(con, "customers")
+        write_batch(con, "customers", events(1), {0: (0, 1)})
+        added = map_event(
+            "customers",
+            1,
+            envelope(
+                "u", after=customer(loyalty_tier="gold", prefs={"sms": True}), tx=9
+            ),
+        )
+        result = write_batch(con, "customers", [added], {0: (1, 2)})
+        rows = con.execute(
+            "select loyalty_tier, prefs from raw.customers order by _loaded_at"
+        ).fetchall()
+        assert rows == [(None, None), ("gold", '{"sms": true}')]
+        changes = con.execute(
+            "select table_name, column_name, batch_id from raw._cdc_schema_changes "
+            "order by column_name"
+        ).fetchall()
+        assert changes == [
+            ("customers", "loyalty_tier", result.batch_id),
+            ("customers", "prefs", result.batch_id),
+        ]
+        # A later batch without the column still loads (dropped column -> null)
+        write_batch(con, "customers", events(1, start=2), {0: (2, 3)})
+        assert con.execute("select count(*) from raw.customers").fetchone()[0] == 3
+
+
+def test_an_unsafe_column_name_is_refused(tmp_path: Path) -> None:
+    with duckdb.connect(str(tmp_path / "w.duckdb")) as con:
+        ensure_tables(con, "customers")
+        bad = map_event("customers", 0, envelope("c", after=customer(**{"x; drop": 1})))
+        with pytest.raises(ValueError, match="unsafe column"):
+            write_batch(con, "customers", [bad], {0: (0, 1)})
+        assert con.execute("select count(*) from raw._cdc_offsets").fetchone()[0] == 0

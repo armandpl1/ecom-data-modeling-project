@@ -20,6 +20,18 @@ transaction as the rows. A crash before the commit leaves neither rows nor
 offsets, so the next run re-reads the same events; nothing is lost or doubled.
 Each batch is also recorded in raw._load_log, like an extract file.
 
+A batch never ends inside a source transaction: when --max-events cuts a
+partition short, the trailing events of the unfinished transaction are left
+for the next run, so a delete and the update just before it stay together.
+
+Schema changes: a column added in Postgres shows up as an extra field in the
+events. It is added to raw.<table> as varchar (raw is all text) in the same
+transaction as the batch and recorded in raw._cdc_schema_changes, so nothing
+is dropped. Staging selects its columns by name, so dbt keeps working; the new
+column reaches Silver once a staging model selects it. A dropped column just
+arrives as null. A new column's values keep Debezium's encoding (a timestamp
+as microseconds) until it is given a kind in cdc_schema.KINDS.
+
 Usage:
     python scripts/cdc_consumer.py                       # one catch-up run
     python scripts/cdc_consumer.py --follow --interval 1 # keep consuming
@@ -39,7 +51,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import duckdb
-from cdc_schema import DATA_COLUMNS, KEYS, TABLES, kind, topic
+from cdc_schema import DATA_COLUMNS, KEYS, METADATA, TABLES, kind, topic
 from load_raw import ensure_load_log
 from raw_data.config import COLUMNS, TS_FMT
 
@@ -78,6 +90,8 @@ def format_value(table: str, column: str, value):
         return (date(1970, 1, 1) + timedelta(days=int(value))).isoformat()
     if k == "boolean":
         return "true" if value else "false"
+    if isinstance(value, (dict, list)):  # e.g. json columns added later
+        return json.dumps(value, sort_keys=True)
     return str(value)  # numeric arrives as text (decimal.handling.mode=string)
 
 
@@ -91,17 +105,23 @@ def map_event(table: str, offset: int, value: bytes | str | None) -> Event:
     source = envelope.get("source") or {}
     commit_us = source.get("ts_us") or source.get("ts_ms", 0) * 1000
     row = {c: format_value(table, c, image.get(c)) for c in DATA_COLUMNS[table]}
+    # Columns added at the source after this code was written: keep them too
+    row |= {
+        c: format_value(table, c, v)
+        for c, v in image.items()
+        if c not in row and c not in METADATA
+    }
     row["_op"] = op
-    row["_loaded_at"] = (EPOCH + timedelta(microseconds=commit_us)).strftime(LOADED_AT_FMT)
+    row["_loaded_at"] = (EPOCH + timedelta(microseconds=commit_us)).strftime(
+        LOADED_AT_FMT
+    )
     return Event(offset, row, source.get("txId"))
 
 
 def drop_delete_touches(table: str, events: list[Event]) -> list[Event]:
     """Drop the update the source makes just before a delete (same transaction)."""
     key = KEYS[table]
-    deletes = {
-        (e.row[key], e.tx_id) for e in events if e.row and e.row["_op"] == "D"
-    }
+    deletes = {(e.row[key], e.tx_id) for e in events if e.row and e.row["_op"] == "D"}
     return [
         e
         for e in events
@@ -109,23 +129,85 @@ def drop_delete_touches(table: str, events: list[Event]) -> list[Event]:
     ]
 
 
+def trim_partial_transaction(events: list[Event]) -> list[Event]:
+    """Drop the trailing events of a transaction the batch cut in the middle.
+
+    Only for a capped read (more events wait after the last one). If one
+    transaction is larger than the whole batch it is kept, so the run still
+    makes progress.
+    """
+    last_tx = events[-1].tx_id if events else None
+    if last_tx is None:
+        return events
+    cut = len(events)
+    while cut > 0 and events[cut - 1].tx_id == last_tx:
+        cut -= 1
+    if cut == 0:
+        log.warning("transaction %s is larger than --max-events; kept whole", last_tx)
+        return events
+    return events[:cut]
+
+
 def ensure_tables(con: duckdb.DuckDBPyConnection, table: str) -> None:
     ensure_load_log(con)
-    con.execute(
-        """
+    con.execute("""
         create table if not exists raw._cdc_offsets (
             topic       varchar not null,
             partition   integer not null,
             next_offset bigint  not null,
             primary key (topic, partition)
         )
-        """
-    )
+        """)
+    con.execute("""
+        create table if not exists raw._cdc_schema_changes (
+            table_name  varchar   not null,
+            column_name varchar   not null,
+            batch_id    varchar   not null,
+            detected_at timestamp not null,
+            primary key (table_name, column_name)
+        )
+        """)
     columns = ", ".join(f"{c} varchar" for c in COLUMNS[table])
     con.execute(
         f"create table if not exists raw.{table} ({columns}, _ingested_at timestamp, "
         "_batch_id varchar, _file_name varchar)"
     )
+
+
+LINEAGE_COLUMNS = ("_ingested_at", "_batch_id", "_file_name")
+
+
+def raw_columns(con: duckdb.DuckDBPyConnection, table: str) -> list[str]:
+    rows = con.execute(
+        "select column_name from information_schema.columns "
+        "where table_schema = 'raw' and table_name = ? order by ordinal_position",
+        [table],
+    ).fetchall()
+    return [r[0] for r in rows if r[0] not in LINEAGE_COLUMNS]
+
+
+def add_new_columns(
+    con: duckdb.DuckDBPyConnection, table: str, rows: list[dict], batch_id: str
+) -> list[str]:
+    """Add columns the source gained since the raw table was created."""
+    existing = raw_columns(con, table)
+    new = [c for c in dict.fromkeys(k for r in rows for k in r) if c not in existing]
+    for column in new:
+        if not column.isidentifier():
+            raise ValueError(f"unsafe column name from the source: {column!r}")
+        con.execute(f'alter table raw.{table} add column "{column}" varchar')
+        con.execute(
+            "insert or ignore into raw._cdc_schema_changes "
+            "values (?, ?, ?, current_timestamp::timestamp)",
+            [table, column, batch_id],
+        )
+        log.warning(
+            "raw.%s: new source column %s added (varchar); "
+            "select it in the staging model to use it",
+            table,
+            column,
+        )
+    return existing + new
 
 
 def stored_offsets(con: duckdb.DuckDBPyConnection, name: str) -> dict[int, int]:
@@ -156,8 +238,9 @@ def write_batch(
     con.execute("begin transaction")
     try:
         if rows:
+            columns = add_new_columns(con, table, rows, batch_id)
             with tempfile.NamedTemporaryFile("w", suffix=".csv", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=COLUMNS[table])
+                writer = csv.DictWriter(f, fieldnames=columns)
                 writer.writeheader()
                 writer.writerows(rows)
                 f.flush()
@@ -213,18 +296,24 @@ def read_new_events(
                 TopicPartition(name, partition), timeout=10
             )
             start = max(offsets.get(partition, low), low)
+            end = high
             if max_events is not None:
                 high = min(high, start + max(max_events - len(events), 0))
             if start >= high:
                 continue
             consumer.assign([TopicPartition(name, partition, start)])
             position = start
+            read: list[Event] = []
             while position < high:
                 for message in consumer.consume(min(500, high - position), timeout=10):
                     if message.error():
                         raise RuntimeError(message.error())
-                    events.append(map_event(table, message.offset(), message.value()))
+                    read.append(map_event(table, message.offset(), message.value()))
                     position = message.offset() + 1
+            if position < end:  # capped: don't stop inside a transaction
+                read = trim_partial_transaction(read)
+                position = read[-1].offset + 1
+            events += read
             ranges[partition] = (start, position)
         return events, ranges
     finally:
@@ -271,7 +360,9 @@ def main(argv: list[str] | None = None) -> int:
         loaded = [r for r in results if r.rows]
         if loaded or not args.follow:
             print(
-                "; ".join(f"{r.table}: {r.rows} rows from {r.events} events" for r in results)
+                "; ".join(
+                    f"{r.table}: {r.rows} rows from {r.events} events" for r in results
+                )
             )
         if not args.follow:
             return 0

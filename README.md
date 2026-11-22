@@ -287,6 +287,7 @@ make cdc-replay    # replay the change history into Postgres (UNTIL=2025-06-30 t
 make cdc-load      # load new change events into raw.* (safe to rerun)
 make build         # dbt as usual (skip its generate/load steps: `dbt build`)
 make cdc-down      # stop the stack and delete its data
+make cdc-e2e       # the whole check on a fresh stack (below), about 4 minutes
 ```
 
 **Source system.** `cdc/postgres/init.sql` holds typed tables (numeric,
@@ -337,11 +338,30 @@ Notes:
 - **Service levels:** `batch_volume` compares file extracts only. A CDC batch
   is as big as whatever changed since the last poll, so a CDC-fed table is
   reported as a stream; freshness and lag still apply.
-- **Not in CI:** the stack needs about 2.5 GB of images (Debezium Server alone
-  is 1.53 GB). CI runs the CDC unit tests (event mapping, exactly-once
-  batches, the replay), not the live stack.
-- **Not orchestrated yet:** Dagster still runs the file path. A CDC sensor is
-  the natural next step.
+- **Whole-path check:** `make cdc-e2e` (`scripts/check_cdc_e2e.py`) starts a
+  fresh stack, builds the CSV path and the CDC path into separate
+  warehouses, and fails unless every Gold table is identical, every change
+  lands exactly once (a rerun loads nothing), and a column added in Postgres
+  reaches raw with dbt still passing. Last run: 6 of 6 Gold tables identical;
+  21,234 changes in 4 capped runs (5,000 events per table each) in 11.1 s;
+  `loyalty_tier` added to `raw.customers`; 3 min 54 s in total.
+- **In CI, but separately:** the stack needs about 2.5 GB of images
+  (Debezium Server alone is 1.53 GB), so `.github/workflows/cdc-e2e.yml` runs
+  `check_cdc_e2e.py` only on pull requests that touch CDC or staging code,
+  every Monday, or by hand. It isn't a required check. The main CI runs the
+  CDC unit tests.
+- **Orchestrated:** Dagster's `cdc_changes` asset runs the consumer, in its
+  own `cdc_load` job, every 5 minutes with `cdc_schedule` (stopped by
+  default, since it needs the stack). `daily_pipeline` leaves it out, so the
+  file path still runs without Docker, and `alert_on_failure` watches both.
+- **Batches end on a transaction:** when `--max-events` caps a batch, the
+  last unfinished source transaction waits for the next run, so a delete and
+  the update just before it are never split.
+- **Schema changes:** a column added at the source arrives as an extra field.
+  The consumer adds it to `raw.<table>` (as text, like every raw column) in
+  the same transaction as the batch and logs it in `raw._cdc_schema_changes`.
+  Staging selects columns by name, so dbt keeps working; select the new
+  column in the staging model to use it. A dropped column arrives as null.
 - **Lag:** measure it with `scripts/cdc_lag.py` while the consumer runs with
   `--follow` (see the script's docstring). About 1 s of the lag is the poll
   interval.
