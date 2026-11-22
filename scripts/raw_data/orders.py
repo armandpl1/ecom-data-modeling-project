@@ -1,19 +1,45 @@
-"""Orders, their lines, and the order status lifecycle.
+"""Generate orders.csv (order headers) and order_lines.csv (their products).
 
-An order (orders.csv) has a customer, a payment method, a status and a total.
-Its lines (order_lines.csv) each have a product, a quantity, the product's
-price at that moment and a line discount. order_total is always the sum of
-the line totals. Orders are only placed while the customer exists, and lines
-only for products that are active.
+What one order looks like:
 
-Possible changes: a wrong quantity on the first line fixed after placing,
-then placed -> shipped -> delivered (or cancelled), a goodwill discount on
-every line, returns of the whole order, and returns of single lines.
+    orders.csv       one header per order: customer, payment method, status,
+                     and order_total
+    order_lines.csv  1-5 lines per order. Each line has one product, a
+                     quantity, the product's price on the order date, and a
+                     discount
 
-Determinism: the first line and everything about the order header draw from
-the main History in the same order as when every order had one product, so
-products, customers and subscriptions stay byte-identical. Extra lines and
-single-line returns draw from a separate substream.
+Rules that always hold:
+    - order_total equals the sum of the line totals, in every load.
+    - An order is only placed while its customer exists.
+    - A line only uses a product that is on sale at the order time.
+    - Each order uses a product only once.
+
+How an order changes over time (each step is a new CDC row):
+
+    1. Placed       header and lines written with _op = I.
+                    In 4% of orders the first line has a wrong quantity,
+                    which is fixed a little later (header and line, _op = U).
+    2. Status       placed -> shipped -> delivered, or placed -> cancelled
+                    (6%, which ends the order).
+    3. Discount     after delivery, 2% of orders get a goodwill discount:
+                    +15 points on every line (capped at 50%), so the header
+                    total and every line change together.
+    4. Return       then either the whole order comes back (5%: the header
+                    status becomes returned, the lines don't change), or,
+                    in multi-line orders only, single lines come back (4% per
+                    line: that line's line_status becomes returned, the
+                    header doesn't change). Never both.
+
+Header and lines load together: a header change and the line rows that
+belong to it get the same updated_at and _loaded_at, as if one source
+transaction wrote them. A line is never written for a header row that
+wasn't written.
+
+Determinism (the CSVs must stay byte-identical for the same seed): the
+header and the first line draw from the main History, in the same order as
+before multi-line orders existed. Lines 2-5, single-line returns and
+line duplicates draw from a separate substream (LINE_SUBSTREAM), so adding
+lines didn't change customers, products or subscriptions.
 """
 
 from __future__ import annotations

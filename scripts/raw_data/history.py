@@ -1,9 +1,25 @@
 """The CDC mechanics shared by every table.
 
 A History holds the random sources and the simulated time range, and knows
-how to write one version of a record as a CDC row: with updated_at, _op and
-_loaded_at, a realistic nightly load time, the occasional late arrival,
-bad-then-corrected values, and duplicate deliveries.
+how to write one version of a record as a CDC row: a realistic nightly load
+time, the occasional late arrival, bad-then-corrected values, and duplicate
+deliveries.
+
+Every row gets three metadata columns on top of the record's own fields:
+
+    updated_at   when the change happened in the source (event time)
+    _op          what happened to the record:
+                   I  insert: the record was created
+                   U  update: the record changed. The row holds the full
+                      record after the change, not only the changed columns
+                   D  delete: the record was removed. The row holds its last
+                      values, with updated_at set to the delete time
+    _loaded_at   when the row landed in the warehouse (load time)
+
+The leading underscore marks columns added by the pipeline, not business
+data. Bronze turns _op into is_deleted (_op = 'D'), and the SCD2 macro turns
+a delete into a final tombstone version. I and U are handled the same way
+downstream: the latest version per key wins.
 
 All randomness goes through history.rng and history.fake, both seeded, so the
 same seed and arguments always produce the same files. The table generators
@@ -78,7 +94,19 @@ class History:
         loaded: datetime | None = None,
     ) -> datetime | None:
         """Append one version of a record. Skips changes that are in the future
-        or haven't been loaded yet as of the extract time."""
+        or haven't been loaded yet as of the extract time.
+
+        Args:
+            rows: the table's output rows, appended to in place.
+            state: the record's full values after this change.
+            ts: when the change happened; becomes updated_at.
+            op: the _op code. "I" for the first version, "U" (default) for
+                a change, "D" for a delete, with state holding the last values.
+            loaded: force a _loaded_at instead of drawing one from load_time.
+
+        Returns:
+            The row's _loaded_at, or None if the row was skipped.
+        """
         if ts > self.end:
             return None
         loaded = loaded or self.load_time(ts)
