@@ -286,11 +286,11 @@ same as a full rebuild (gap 2 in IMPROVEMENTS.txt).
 5. The two unit tests declare `is_incremental: false` (they test the full
    computation).
 
-**Check:** `make check-incremental` prints `OK: 7 tables identical`.
-Measured: batch 2 read exactly its 2,070 raw rows, rebuilt 111 customers,
-4 products, 31 subscriptions and 792 orders in Silver, and a rerun with no
-new load read 0 rows. On this small dataset the incremental run is slower
-than a full refresh (74.7 s vs 45.6 s on a laptop).
+**Check:** `make check-incremental` prints `OK: 8 tables identical` (7
+before `fact_order_headers`, Step 19). Measured with order lines: batch 2
+read exactly its 3,252 raw rows (1,182 of them order lines), and a rerun
+with no new load read 0 rows. On this small dataset the incremental run is
+slower than a full refresh (93.0 s vs 57.7 s on a laptop).
 
 ---
 
