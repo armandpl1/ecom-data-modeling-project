@@ -39,6 +39,9 @@ models:
     marts:
       +schema: gold
       +materialized: table
+      # Reporting: aggregates on the star schema, ready for dashboards
+      reporting:
+        +schema: reporting
 
 data_tests:
   ecom:

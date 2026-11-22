@@ -465,6 +465,27 @@ data: the 4 new tests pass (no fact on the unknown member).
 
 ---
 
+## Step 17: Reporting marts ✅
+
+**Goal:** aggregates for the common business questions, so analysts don't
+rebuild the logic (gap 8 in IMPROVEMENTS.txt).
+
+1. `models/marts/reporting/` in schema `reporting` (dbt_project.yml).
+2. `customer_lifetime_value` (one row per customer, including customers
+   only seen in facts), `customer_rfm` (quintile scores, ties broken by
+   customer_id, and a segment), `cohort_retention` and
+   `subscription_cohort_retention` (cohort x months since, up to the as-of
+   month), `repeat_purchase` (per first-order month).
+3. Contracts, uniqueness, accepted values and range tests in
+   `_reporting.yml`; `tests/assert_reporting_reconciles_to_facts.sql`.
+
+**Check:** `dbt build -s models/marts/reporting assert_reporting_reconciles_to_facts`:
+76 passed. Lifetime-value revenue equals fact_orders ($1,078,753.71), and
+current MRR equals the dashboard's ($4,162). Running the reconciliation
+SQL with one customer or one cohort removed reports the mismatch.
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in

@@ -20,7 +20,7 @@ solution, and alternatives that were considered.
 | 5  | No schema contracts on Gold (done)     | Medium | Small  | 5        |
 | 6  | No unknown-member rows (done)          | Medium | Small  | 6        |
 | 7  | No metrics layer (done)                | Medium | Medium | 7        |
-| 8  | No reporting marts                     | Medium | Medium | 8        |
+| 8  | No reporting marts (done)              | Medium | Medium | 8        |
 | 9  | Personal data is unmasked (done)       | Medium | Small  | 9        |
 | 10 | No monitoring or alerting (done)       | Medium | Medium | 10       |
 | 11 | SQL is not linted (done)               | Low    | Small  | 11       |
@@ -296,21 +296,12 @@ a Python app.
 
 ## 8. No reporting marts
 
-**Today:** analysts get a star schema and must write the business logic
-themselves.
-
-**Recommended solution:** a `models/marts/reporting/` folder with
-aggregate tables built on the star schema:
-
-1. customer_lifetime_value: orders, revenue, subscription months and MRR
-   per customer.
-2. customer_rfm: recency, frequency and monetary scores, plus a segment.
-3. cohort_retention: share of customers in each first-order month who
-   order again in month 1, 2, 3 and so on. A subscription version too.
-4. repeat_purchase: repeat rate and days between orders.
-
-Each gets a declared grain, a uniqueness test, and a reconciliation test
-against the facts (for example, total revenue matches fact_orders).
+**Status: done (Step 17 in PROJECT_STEPS.txt).** customer_lifetime_value,
+customer_rfm, cohort_retention, subscription_cohort_retention and
+repeat_purchase in models/marts/reporting/ (schema reporting), each with a
+declared grain, contracts, tests, and a reconciliation test against the
+facts. Still open: they are not in the semantic layer or the dashboard yet,
+and not published to Iceberg (ops/lakehouse.yml lists Gold only).
 
 ---
 
