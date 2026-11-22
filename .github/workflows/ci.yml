@@ -4,6 +4,7 @@
 #          ├─> dbt (build + test) ─> docs ─> deploy-docs (main only)
 #   test ──┘
 #   lint ──> slim (pull requests: changed models only, deferring to prod)
+#   lint ──> terraform (infra/terraform on an AWS emulator, then checked)
 #
 # CI (lint, test, dbt, docs) runs on every pull request and every push to main.
 # CD (deploy-docs) publishes the dbt docs site to GitHub Pages, only after a
@@ -218,6 +219,69 @@ jobs:
         with:
           path: site
           retention-days: 14
+
+  # Infrastructure as code: the S3 buckets, KMS key and pipeline role in
+  # infra/terraform, applied to Moto (an AWS emulator, no account) and
+  # checked. Not a required check.
+  terraform:
+    name: Terraform (AWS emulator)
+    needs: [lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      moto:
+        image: motoserver/moto:5.2.5
+        ports:
+          - 15000:5000
+    env:
+      AWS_ENDPOINT_URL: http://localhost:15000
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.15.6
+          terraform_wrapper: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Format and validate
+        run: |
+          terraform -chdir=infra/terraform fmt -check -recursive
+          terraform -chdir=infra/terraform init -input=false
+          terraform -chdir=infra/terraform validate
+
+      - name: Security scan (Trivy, fails on any finding)
+        run: |
+          docker run --rm -v "$PWD/infra/terraform:/src" aquasec/trivy:0.67.2 \
+            config --quiet --exit-code 1 /src
+
+      - name: Apply to the emulator; a second plan must show no changes
+        run: |
+          terraform -chdir=infra/terraform apply -auto-approve -input=false
+          # Moto ignores tags sent with CreateBucket; a second apply sets them
+          terraform -chdir=infra/terraform apply -auto-approve -input=false
+          terraform -chdir=infra/terraform plan -detailed-exitcode -input=false
+
+      - name: Check the resources are safe, and uploads are idempotent
+        run: |
+          uv run python scripts/check_infra.py
+          uv run python scripts/generate_raw_data.py
+          uv run python scripts/upload_extracts.py
+          uv run python scripts/upload_extracts.py | tee target_upload.txt
+          grep -q "^0 of " target_upload.txt
 
   # Slim CI: build only the models a pull request changed, plus everything
   # downstream, and read every unchanged model from the prod warehouse

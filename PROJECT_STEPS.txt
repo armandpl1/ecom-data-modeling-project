@@ -542,6 +542,34 @@ check-late-dimensions`, `make cdc-e2e` (7 of 7 Gold tables identical,
 
 ---
 
+## Step 20: Infrastructure as code (Terraform) ✅
+
+**Goal:** define the AWS resources the pipeline needs as code, checked in CI,
+without an AWS account.
+
+1. `infra/terraform/`: raw, lakehouse and access-log buckets (versioning,
+   KMS encryption with bucket keys, public access blocked, access logging, a
+   noncurrent-version expiry on raw), a customer-managed KMS key with
+   rotation, and a least-privilege pipeline role and policy.
+2. `infra/docker-compose.yml`: Moto 5.2.5, an AWS emulator (LocalStack now
+   requires an account). The provider points at it unless
+   `use_emulator = false`.
+3. `scripts/check_infra.py` (`make infra-check`): reads every setting back
+   and checks the policy (no wildcards, only the buckets and the key, no
+   destructive actions). `scripts/upload_extracts.py` (`make
+   upload-extracts`): content-addressed, idempotent uploads.
+4. CI job `terraform`: fmt, validate, Trivy (fails on any finding), apply,
+   clean second plan, checks, uploads.
+5. Tests: `scripts/tests/test_infra.py` with moto's in-process mock (8).
+
+**Check:** `make infra-up` (21 resources, then "No changes"), `make
+infra-check` passes, `make upload-extracts` twice (5 uploaded, then 0).
+Break the raw bucket's versioning by hand: `make infra-check` fails, `make
+infra-plan` exits 2 with exactly the drifted resources, `make infra-up`
+restores it.
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in
