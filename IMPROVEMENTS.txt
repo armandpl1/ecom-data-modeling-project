@@ -40,9 +40,11 @@ Server -> Redpanda -> an exactly-once consumer into the raw layer. Gold from
 CDC matches Gold from the files. Also done: a Dagster job and schedule for
 the consumer, a CI workflow for the live stack (CDC changes, weekly, or by
 hand), additive schema changes, and batches that never split a transaction.
-Still open: a column type change at the source is not detected (raw is all
-text, so it loads, but a new column's values keep Debezium's encoding until
-it is given a kind in scripts/cdc_schema.py).
+Source type changes are detected from each event's schema: the table stops
+loading until the change is reviewed (docs/runbooks/cdc-type-change.md), and
+new columns are decoded by their own type. Still open: numeric and text look
+the same in Debezium's string decimal mode, so a change between them is not
+flagged.
 
 ---
 

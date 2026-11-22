@@ -358,7 +358,12 @@ nightly files.
    tombstone-only batches, replay order and SQL; 2 new SLO tests.
 7. Batches never end inside a source transaction (`trim_partial_transaction`).
 8. Additive schema changes: a new source column is added to raw as text and
-   logged in `raw._cdc_schema_changes`.
+   logged, with its source type, in `raw._cdc_schema_changes`.
+   Type changes: events carry their Debezium schema
+   (`value.schemas.enable=true`); values are decoded by that schema, and a
+   known column whose type changes blocks its table (offsets unchanged,
+   recorded in `raw._cdc_type_changes`, exit 3) until the change is allowed
+   in `cdc_schema.ALLOWED_SOURCE_KINDS` (docs/runbooks/cdc-type-change.md).
 9. Dagster: `cdc_changes` asset, `cdc_load` job, `cdc_schedule` every 5
    minutes (stopped by default); `daily_pipeline` leaves it out.
 10. `scripts/check_cdc_e2e.py` (`make cdc-e2e`): CSV path vs CDC path on a
@@ -366,8 +371,10 @@ nightly files.
     on CDC pull requests, weekly and by hand.
 
 **Check:** `make cdc-e2e`: 6 of 6 Gold tables identical, 21,234 raw rows for
-21,234 changes, a rerun loads nothing, `loyalty_tier` lands in raw and
-`dbt build` still passes (3 min 54 s on this laptop).
+21,234 changes, a rerun loads nothing, `loyalty_tier` lands in raw, a new
+timestamp column lands as timestamp text, a `timestamp` to `timestamptz`
+change blocks `orders` until allowed, and `dbt build` still passes (3 min
+47 s on this laptop).
 
 ---
 
