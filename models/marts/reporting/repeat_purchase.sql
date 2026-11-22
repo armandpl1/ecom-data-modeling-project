@@ -22,11 +22,10 @@ sequenced as (
         order_placed_at,
         min(order_placed_at) over (partition by customer_id) as first_order_at,
         count(*) over (partition by customer_id)             as orders,
-        date_diff(
-            'day',
-            lag(order_placed_at) over (partition by customer_id order by order_placed_at, order_id),
-            order_placed_at
-        )                                                    as days_since_previous_order
+        {{ days_between(
+            'lag(order_placed_at) over (partition by customer_id order by order_placed_at, order_id)',
+            'order_placed_at'
+        ) }}                                                 as days_since_previous_order
     from orders
 
 ),

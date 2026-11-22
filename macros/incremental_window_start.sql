@@ -9,7 +9,7 @@
     earlier: more rows are recomputed, never fewer. -#}
 {% macro incremental_window_start() -%}
     (
-        select min(newest_load) - interval ({{ var('incremental_lookback_hours') }}) hour
+        select min(newest_load) - interval {{ var('incremental_lookback_hours') | int }} hour
         from (
             select table_name, max(loaded_at) as newest_load
             from {{ source('raw', '_load_log') }}

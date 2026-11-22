@@ -449,6 +449,63 @@ partitioning, reruns, time travel, schema evolution and widening, the guard
 blocking a dropped column and a type change, snapshot expiry, and the
 publish ids.
 
+## Databricks (Unity Catalog)
+
+The same dbt project also builds on Databricks, on a serverless SQL
+warehouse with Unity Catalog. DuckDB stays the default target; Databricks
+is `--target databricks`.
+
+```bash
+cp .env.databricks.example .env.databricks   # workspace host and warehouse id (git-ignored)
+databricks auth login --host <workspace URL>   # browser sign-in; no token in any file
+make databricks-load    # CSVs to a Unity Catalog volume, COPY INTO raw tables (reruns load nothing)
+make databricks-build   # dbt build --target databricks
+make check-databricks   # Gold identical on DuckDB and Databricks, row for row
+```
+
+- **Raw layer:** `scripts/databricks_load_raw.py` uploads each extract to
+  `/Volumes/ecom/raw/landing/<table>/` named by its checksum, then `COPY
+  INTO ecom.raw.<table>` (all columns text, plus `_ingested_at`,
+  `_batch_id`, `_file_name`). COPY INTO remembers loaded files, so reruns
+  load nothing; each batch is logged in `ecom.raw._load_log`.
+- **One codebase, two engines:** SQL that differs is in
+  `macros/cross_db.sql` as `adapter.dispatch` macros with `duckdb__` and
+  `databricks__` versions (`star_except`, `date_key`, `days_between`,
+  `months_between`, `day_spine`, `integer_range`, `regexp_replace_all`,
+  `sql_string`, `sha256_hex`, ...). Where one form works on both (`qualify`,
+  `max_by`, `::`, interval math, `cast(... as string)`), the models use it
+  directly. DuckDB's `ASOF JOIN` became a join that keeps the latest match.
+  The refactor left all 25 DuckDB tables identical.
+- **Differences found by comparing the engines:**
+  - `'New Year''s Day'` is "New Years Day" on Databricks (it escapes quotes
+    with a backslash): `sql_string()` writes each engine's form.
+  - `'^\S+\s*'` loses its backslashes on Databricks: regex patterns are
+    raw strings (`r'...'`) there.
+  - Average order value: DuckDB divided decimals through floating point
+    (75.99 / 2 rounded to 37.99); Databricks rounds the exact value half-up
+    (38.00). Both now compute it in integer cents, exactly: the one DuckDB
+    value change in this step.
+  - Date parts are `int` on Databricks and `bigint` on DuckDB; `date - date`
+    is an interval on Databricks. Explicit casts and `days_between()` fix
+    both.
+- **Unity Catalog governance:** a `pii_mask` SQL function and column masks
+  on every raw personal-data column of `restricted.dim_customer_pii`: only
+  members of the `pii_readers` group see values, everyone else (the owner
+  included) sees `***`. `SELECT` on `gold` and `reporting` is granted to
+  `account users`; `restricted` gets no grant. On DuckDB these hooks do
+  nothing.
+- **Free Edition limits:** at most 100 objects per schema and 500 per
+  metastore. Saving each test's failing rows as a view (about 240) passed
+  both, so `macros/should_store_failures.sql` turns that off on Databricks
+  (DuckDB keeps it).
+
+**Measured** on Databricks Free Edition: raw load 49 s (5 extracts, 32,793
+rows, then 0 on a rerun); `dbt build --target databricks` 311 passed with
+the same 2 allowed warnings as DuckDB, in 1 min 43 s; `make
+check-databricks` found 13 of 13 Gold, reporting and restricted tables
+identical (masked columns left out) in 15 s. Not in CI: it needs a
+Databricks workspace and credentials.
+
 ## Airflow version of the pipeline
 
 Dagster is the main orchestrator. `airflow/` runs the same daily pipeline
@@ -1186,6 +1243,7 @@ make prod-state         # build a local prod warehouse and manifest (what CI doe
 make slim-build         # build only what changed since prod-state/, deferring to prod
 make infra-up           # Terraform on an AWS emulator (then make infra-check)
 make airflow-run        # the Airflow version of the pipeline, once (after make airflow-init)
+make databricks-build   # the same dbt project on Databricks (after make databricks-load)
 make check-late-dimensions  # early-arriving facts: unknown member, warning, then re-pointed
 make check-slos         # service-level objectives; each breach names its runbook
 make metrics            # validate the semantic layer and export dashboard datasets
@@ -1301,6 +1359,10 @@ scripts/check_iceberg.py       proves the Iceberg tables match Gold
 ops/lakehouse.yml              Iceberg warehouse, catalog, partitions and snapshot retention
 infra/terraform/               Terraform: S3 buckets, KMS key, pipeline IAM role (AWS emulator by default)
 airflow/                       Airflow version of the pipeline: DAG, tests, its own uv environment
+macros/cross_db.sql            SQL that differs between DuckDB and Databricks (adapter.dispatch)
+macros/unity_catalog.sql       Databricks-only: PII column masks and grants
+scripts/databricks_load_raw.py loads the extracts into Unity Catalog (volume + COPY INTO)
+scripts/compare_engines.py     proves Gold is identical on DuckDB and Databricks
 infra/docker-compose.yml       Moto, the AWS emulator the Terraform is applied to
 scripts/check_infra.py         checks the AWS resources are safe and least privilege
 scripts/upload_extracts.py     uploads the extracts to the raw bucket, content-addressed

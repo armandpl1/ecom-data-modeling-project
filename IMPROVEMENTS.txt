@@ -24,7 +24,7 @@ solution, and alternatives that were considered.
 | 9  | Personal data is unmasked (done)       | Medium | Small  | 9        |
 | 10 | No monitoring or alerting (done)       | Medium | Medium | 10       |
 | 11 | SQL is not linted (done)               | Low    | Small  | 11       |
-| 12 | SQL is tied to DuckDB                  | Low    | Medium | 12       |
+| 12 | SQL is tied to DuckDB (done)           | Low    | Medium | 12       |
 | 13 | Single-product orders only (done)      | Low    | Small  | 13       |
 | 14 | File extracts only, no CDC (done)      | High   | Large  | 14       |
 | 15 | Gold readable by DuckDB only (done)    | Medium | Medium | 15       |
@@ -380,18 +380,12 @@ in-memory target), so SQL inside `is_incremental()` blocks is not linted.
 
 ## 12. SQL is tied to DuckDB
 
-**Today:** the models use DuckDB features: ASOF JOIN, arg_max, qualify,
-`select * exclude`, read_csv and the range() table function. Moving to
-Snowflake or BigQuery would need rewrites.
-
-**Recommended solution:** only if a move to a cloud warehouse is planned.
-
-1. Move DuckDB-specific expressions into macros with adapter.dispatch
-   (for example, asof_join, arg_max, date_spine), each with a duckdb__ and
-   a snowflake__ version.
-2. Use dbt's built-in cross-database macros where they exist
-   (dbt.datediff, dbt.date_trunc, dbt.hash).
-3. Add a CI job that compiles the project against a second adapter.
+**Status: done (Step 22 in PROJECT_STEPS.txt).** The project builds on
+DuckDB and on Databricks (Unity Catalog) from one codebase: dispatch macros
+in macros/cross_db.sql for the SQL that differs, portable SQL elsewhere,
+and a row-for-row comparison of Gold across the two engines (13 of 13
+identical). Still open: Snowflake or BigQuery would need their own macro
+versions; the Databricks build is not in CI (it needs a workspace).
 
 ---
 

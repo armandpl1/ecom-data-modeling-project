@@ -195,6 +195,14 @@ Or read how Gold is published as Apache Iceberg tables
 add a column to a Gold model, run it again and watch the schema evolve; then
 change a column's type and watch the schema guard stop the publish.
 
+Or see the same project run on a second engine (README "Databricks (Unity
+Catalog)"): read macros/cross_db.sql and compare a `duckdb__` macro with its
+`databricks__` twin; then `dbt compile --select dim_date` and
+`dbt compile --select dim_date --target databricks` and diff the SQL. With
+a Databricks workspace: `make databricks-load`, `make databricks-build`,
+`make check-databricks`, and query `ecom.restricted.dim_customer_pii` to
+see the column masks.
+
 Done means: dbt build passes, pytest passes, and the README explains it.
 
 ---

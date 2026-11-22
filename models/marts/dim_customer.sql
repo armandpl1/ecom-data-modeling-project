@@ -11,46 +11,58 @@
 -- version isn't known yet point to it (macros/unknown_member_key.sql). Its
 -- validity range is closed, so it is never current.
 
+with known_versions as (
+
+    select
+        customer_sk,
+        customer_id,
+        {{ mask_pii('first_name', 'initial') }} || ' '
+        || {{ mask_pii('last_name', 'initial') }}     as initials,
+        {{ mask_pii('email', 'email_hash') }}         as email_hash,
+        {{ mask_pii('email', 'email_domain') }}       as email_domain,
+        {{ mask_pii('phone_number', 'phone_last4') }} as phone_last4,
+        city,
+        state,
+        {{ mask_pii('postal_code', 'zip3') }}         as zip3,
+        country,
+        customer_segment,
+        marketing_opt_in,
+        subscription_tier,
+        created_at                                    as customer_created_at,
+
+        version_number,
+        valid_from_timestamp,
+        valid_to_timestamp,
+        is_current,
+        deleted_at,
+        deleted_at is not null                        as is_deleted_customer
+
+    from {{ ref('int_customers_history') }}
+    where not is_deleted
+
+)
+
+-- Both sides list every column in contract order, so the union lines up on
+-- any engine (macros/cross_db.sql: contract_columns)
 select
-    customer_sk,
-    customer_id,
-    {{ mask_pii('first_name', 'initial') }} || ' '
-    || {{ mask_pii('last_name', 'initial') }}     as initials,
-    {{ mask_pii('email', 'email_hash') }}         as email_hash,
-    {{ mask_pii('email', 'email_domain') }}       as email_domain,
-    {{ mask_pii('phone_number', 'phone_last4') }} as phone_last4,
-    city,
-    state,
-    {{ mask_pii('postal_code', 'zip3') }}         as zip3,
-    country,
-    customer_segment,
-    marketing_opt_in,
-    subscription_tier,
-    created_at                                    as customer_created_at,
+    {{ contract_columns() }}
+from known_versions
 
-    version_number,
-    valid_from_timestamp,
-    valid_to_timestamp,
-    is_current,
-    deleted_at,
-    deleted_at is not null                        as is_deleted_customer
-
-from {{ ref('int_customers_history') }}
-where not is_deleted
-
-union all by name
+union all
 
 select
-    {{ unknown_member_key() }}      as customer_sk,
-    {{ unknown_member_key() }}      as customer_id,
-    'Unknown'                       as initials,
-    'Unknown'                       as city,
-    'Unknown'                       as state,
-    'Unknown'                       as country,
-    'Unknown'                       as customer_segment,
-    'unknown'                       as subscription_tier,
-    0                               as version_number,
-    timestamp '1900-01-01 00:00:00' as valid_from_timestamp,
-    timestamp '9999-12-31 00:00:00' as valid_to_timestamp,
-    false                           as is_current,
-    false                           as is_deleted_customer
+    {{ contract_columns({
+        'customer_sk': unknown_member_key(),
+        'customer_id': unknown_member_key(),
+        'initials': "'Unknown'",
+        'city': "'Unknown'",
+        'state': "'Unknown'",
+        'country': "'Unknown'",
+        'customer_segment': "'Unknown'",
+        'subscription_tier': "'unknown'",
+        'version_number': 0,
+        'valid_from_timestamp': "timestamp '1900-01-01 00:00:00'",
+        'valid_to_timestamp': "timestamp '9999-12-31 00:00:00'",
+        'is_current': false,
+        'is_deleted_customer': false
+    }) }}

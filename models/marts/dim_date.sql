@@ -18,24 +18,19 @@ with as_of as (
 
 days as (
 
-    select cast(range as date) as date_day
-    from range(
-        date '{{ var("date_spine_start") }}',
-        date '{{ var("date_spine_end") }}' + interval 1 day,
-        interval 1 day
-    )
+    {{ day_spine("date '" ~ var("date_spine_start") ~ "'", "date '" ~ var("date_spine_end") ~ "'") }}
 
 ),
 
 years as (
 
-    -- One extra year either side, so observed dates that cross a year
-    -- boundary (e.g. New Year's Day on a Saturday) are covered
-    select range as year
-    from range(
-        year(date '{{ var("date_spine_start") }}') - 1,
-        year(date '{{ var("date_spine_end") }}') + 2
-    )
+-- One extra year either side, so observed dates that cross a year
+-- boundary (e.g. New Year's Day on a Saturday) are covered
+    {{ integer_range(
+        "year(date '" ~ var("date_spine_start") ~ "') - 1",
+        "year(date '" ~ var("date_spine_end") ~ "') + 2",
+        "year"
+    ) }}
 
 ),
 
@@ -48,7 +43,7 @@ fixed_holidays as (
     from years
     cross join (
         values
-        ('New Year''s Day', 1, 1),
+        ({{ sql_string("New Year's Day") }}, 1, 1),
         ('Juneteenth', 6, 19),
         ('Independence Day', 7, 4),
         ('Veterans Day', 11, 11),
@@ -63,17 +58,21 @@ floating_holidays as (
     select
         date_day as holiday_date,
         case
-            when month(date_day) = 1 and isodow(date_day) = 1 and nth = 3 then 'Martin Luther King Jr. Day'
-            when month(date_day) = 2 and isodow(date_day) = 1 and nth = 3 then 'Presidents'' Day'
-            when month(date_day) = 5 and isodow(date_day) = 1 and is_last then 'Memorial Day'
-            when month(date_day) = 9 and isodow(date_day) = 1 and nth = 1 then 'Labor Day'
-            when month(date_day) = 10 and isodow(date_day) = 1 and nth = 2 then 'Columbus Day'
-            when month(date_day) = 11 and isodow(date_day) = 4 and nth = 4 then 'Thanksgiving Day'
+            when
+                month(date_day) = 1 and {{ iso_day_of_week('date_day') }} = 1 and nth = 3
+                then 'Martin Luther King Jr. Day'
+            when
+                month(date_day) = 2 and {{ iso_day_of_week('date_day') }} = 1 and nth = 3
+                then {{ sql_string("Presidents' Day") }}
+            when month(date_day) = 5 and {{ iso_day_of_week('date_day') }} = 1 and is_last then 'Memorial Day'
+            when month(date_day) = 9 and {{ iso_day_of_week('date_day') }} = 1 and nth = 1 then 'Labor Day'
+            when month(date_day) = 10 and {{ iso_day_of_week('date_day') }} = 1 and nth = 2 then 'Columbus Day'
+            when month(date_day) = 11 and {{ iso_day_of_week('date_day') }} = 4 and nth = 4 then 'Thanksgiving Day'
         end      as holiday_name
     from (
         select
             date_day,
-            (day(date_day) - 1) // 7 + 1                        as nth,
+            {{ int_div('day(date_day) - 1', 7) }} + 1           as nth,
             month(date_day + interval 7 day) <> month(date_day) as is_last
         from days
     ) as weekday_positions
@@ -99,7 +98,7 @@ observed_holidays as (
 
     -- Saturday holidays are observed on Friday, Sunday holidays on Monday
     select
-        cast(case isodow(holiday_date)
+        cast(case {{ iso_day_of_week('holiday_date') }}
             when 6 then holiday_date - interval 1 day
             when 7 then holiday_date + interval 1 day
             else holiday_date
@@ -132,13 +131,16 @@ calendar as (
         as_of.as_of_date,
 
         -- Fiscal month 1 is the month named by fiscal_year_start_month
-        ((month(days.date_day) - {{ fy_start }} + 12) % 12) + 1 as fiscal_month,
-        year(days.date_day)
-        + case
-            when {{ fy_start }} > 1 and month(days.date_day) >= {{ fy_start }}
-                then 1
-            else 0
-        end                                                     as fiscal_year
+        cast(((month(days.date_day) - {{ fy_start }} + 12) % 12) + 1 as bigint) as fiscal_month,
+        cast(
+            year(days.date_day)
+            + case
+                when {{ fy_start }} > 1 and month(days.date_day) >= {{ fy_start }}
+                    then 1
+                else 0
+            end
+            as bigint
+        )                                                                       as fiscal_year
 
     from days
     cross join as_of
@@ -147,21 +149,21 @@ calendar as (
 
 select
     -- Keys
-    cast(strftime(c.date_day, '%Y%m%d') as integer)        as date_key,
+    {{ date_key('c.date_day') }}                           as date_key,
     c.date_day,
 
     -- Calendar
-    year(c.date_day)                                       as year,
-    quarter(c.date_day)                                    as quarter,
+    cast(year(c.date_day) as bigint)                       as year,
+    cast(quarter(c.date_day) as bigint)                    as quarter,
     'Q' || quarter(c.date_day)                             as quarter_name,
-    month(c.date_day)                                      as month,
-    monthname(c.date_day)                                  as month_name,
-    strftime(c.date_day, '%Y-%m')                          as year_month,
-    day(c.date_day)                                        as day_of_month,
-    dayofyear(c.date_day)                                  as day_of_year,
-    isodow(c.date_day)                                     as iso_day_of_week,
-    dayname(c.date_day)                                    as day_name,
-    weekofyear(c.date_day)                                 as iso_week,
+    cast(month(c.date_day) as bigint)                      as month,
+    {{ month_name('c.date_day') }}                         as month_name,
+    {{ year_month('c.date_day') }}                         as year_month,
+    cast(day(c.date_day) as bigint)                        as day_of_month,
+    cast(dayofyear(c.date_day) as bigint)                  as day_of_year,
+    {{ iso_day_of_week('c.date_day') }}                    as iso_day_of_week,
+    {{ day_name('c.date_day') }}                           as day_name,
+    cast(weekofyear(c.date_day) as bigint)                 as iso_week,
     cast(date_trunc('week', c.date_day) as date)           as week_start,
     cast(date_trunc('month', c.date_day) as date)          as month_start,
     cast(last_day(c.date_day) as date)                     as month_end,
@@ -172,27 +174,27 @@ select
 
     -- Fiscal calendar
     c.fiscal_year,
-    (c.fiscal_month - 1) // 3 + 1                          as fiscal_quarter,
+    {{ int_div('c.fiscal_month - 1', 3) }} + 1             as fiscal_quarter,
     c.fiscal_month,
     'FY' || c.fiscal_year                                  as fiscal_year_name,
-    'FY' || c.fiscal_year || '-Q' || ((c.fiscal_month - 1) // 3 + 1)
+    'FY' || c.fiscal_year || '-Q' || ({{ int_div('c.fiscal_month - 1', 3) }} + 1)
         as fiscal_quarter_name,
 
     -- Weekends, holidays and retail events
-    isodow(c.date_day) in (6, 7)                           as is_weekend,
+    {{ iso_day_of_week('c.date_day') }} in (6, 7)          as is_weekend,
     fh.holiday_name,
     fh.holiday_name is not null                            as is_holiday,
     oh.holiday_name                                        as observed_holiday_name,
     oh.holiday_name is not null                            as is_observed_holiday,
-    isodow(c.date_day) not in (6, 7) and oh.holiday_name is null
+    {{ iso_day_of_week('c.date_day') }} not in (6, 7) and oh.holiday_name is null
         as is_business_day,
     re.event_name                                          as retail_event_name,
     re.event_name is not null                              as is_retail_event,
 
     -- Rolling windows relative to as_of_date
     c.as_of_date,
-    date_diff('day', c.as_of_date, c.date_day)             as days_from_as_of,
-    date_diff('month', date_trunc('month', c.as_of_date), date_trunc('month', c.date_day))
+    {{ days_between('c.as_of_date', 'c.date_day') }}       as days_from_as_of,
+    {{ months_between("date_trunc('month', c.as_of_date)", "date_trunc('month', c.date_day)") }}
         as months_from_as_of,
     c.date_day > c.as_of_date                              as is_future,
     c.date_day between c.as_of_date - 6 and c.as_of_date   as is_last_7_days,
@@ -210,7 +212,9 @@ select
     year(c.date_day) = year(c.as_of_date) - 1
     and c.date_day <= c.as_of_date - interval 1 year       as is_prior_year_to_date,
     c.fiscal_year = (
-        select as_of.fiscal_year from calendar as as_of
+        -- max(): one row per day, so the same value; engines that need
+        -- correlated subqueries aggregated accept it
+        select max(as_of.fiscal_year) from calendar as as_of
         where as_of.date_day = c.as_of_date
     )
     and c.date_day <= c.as_of_date                         as is_fiscal_year_to_date

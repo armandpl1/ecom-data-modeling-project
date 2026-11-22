@@ -63,7 +63,10 @@ with_previous as (
         lag(subscription_status) over w as status_before,
         lag(plan_name) over w           as plan_before,
         coalesce(
-            max(paying_mrr) over (w rows between unbounded preceding and 1 preceding),
+            max(paying_mrr) over (
+                partition by subscription_id order by valid_from_timestamp
+                rows between unbounded preceding and 1 preceding
+            ),
             0
         ) > 0                           as has_paid_before
     from versions
@@ -118,7 +121,7 @@ select
     classified.subscription_version_sk                          as subscription_event_id,
     classified.subscription_id,                     -- degenerate dimension
     coalesce(customers.customer_sk, {{ unknown_member_key() }}) as customer_sk,
-    cast(strftime(classified.valid_from_timestamp, '%Y%m%d') as integer)
+    {{ date_key('classified.valid_from_timestamp') }}
         as event_date_key,
     classified.customer_id,
     classified.valid_from_timestamp                             as event_at,

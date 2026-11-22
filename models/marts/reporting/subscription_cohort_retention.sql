@@ -46,6 +46,12 @@ last_month as (
 
 ),
 
+offsets as (
+
+    {{ integer_range(0, 1000, 'months_since_start') }}
+
+),
+
 grid as (
 
     select
@@ -55,9 +61,9 @@ grid as (
         offsets.months_since_start
     from cohort_sizes
     cross join last_month
-    cross join range(0, 1000) as offsets (months_since_start)
+    cross join offsets
     where
-        cohort_sizes.cohort_month + to_months(offsets.months_since_start::integer)
+        {{ add_months_to('cohort_sizes.cohort_month', 'cast(offsets.months_since_start as integer)') }}
         <= last_month.last_month
 
 ),
@@ -66,9 +72,9 @@ active as (
 
     select
         cohorts.cohort_month,
-        date_diff('month', cohorts.cohort_month, paying.month_start) as months_since_start,
-        count(*)                                                     as paying_subscriptions,
-        sum(paying.mrr)                                              as mrr
+        {{ months_between('cohorts.cohort_month', 'paying.month_start') }} as months_since_start,
+        count(*)                                                           as paying_subscriptions,
+        sum(paying.mrr)                                                    as mrr
     from paying
     inner join cohorts on paying.subscription_id = cohorts.subscription_id
     group by cohorts.cohort_month, months_since_start

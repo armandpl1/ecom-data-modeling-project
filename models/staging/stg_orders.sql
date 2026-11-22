@@ -46,7 +46,7 @@ candidates as (
     {% if is_incremental() %}
     -- Rows already here for the same (key, updated_at) compete with the new
     -- ones, so the row loaded last still wins across runs
-        union all by name
+        {{ union_all_same_columns() }}
         select * from {{ this }} as existing
         where exists (
             select 1 from cleaned as new

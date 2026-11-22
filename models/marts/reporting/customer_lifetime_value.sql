@@ -78,8 +78,13 @@ select
     coalesce(orders.orders, 0)                                   as orders,
     cast(coalesce(orders.recognized_revenue, 0) as decimal(14, 2))
         as recognized_revenue,
+    -- Exact half-up rounding in integer cents: dividing decimals goes through
+    -- floating point on some engines (75.99 / 2 would round to 37.99)
     cast(
-        coalesce(orders.recognized_revenue, 0) / nullif(orders.orders, 0)
+        {{ int_div(
+            '2 * cast(round(coalesce(orders.recognized_revenue, 0) * 100) as bigint) + orders.orders',
+            '2 * nullif(orders.orders, 0)'
+        ) }} / 100.0
         as decimal(12, 2)
     )                                                            as average_order_value,
     coalesce(subscriptions.paying_subscription_months, 0)        as paying_subscription_months,

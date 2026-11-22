@@ -4,7 +4,7 @@
 export UV_PROJECT_ENVIRONMENT := deenv
 RUN := uv run
 
-.PHONY: help install hooks lint test data load build check-slos airflow-init airflow-test airflow-run airflow-ui infra-up infra-plan infra-check upload-extracts infra-down prod-state slim-build check-incremental check-late-dimensions iceberg check-iceberg pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag cdc-e2e
+.PHONY: help install hooks lint test data load build check-slos databricks-load databricks-build check-databricks airflow-init airflow-test airflow-run airflow-ui infra-up infra-plan infra-check upload-extracts infra-down prod-state slim-build check-incremental check-late-dimensions iceberg check-iceberg pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag cdc-e2e
 
 help:  ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -117,6 +117,19 @@ infra-down:  ## Stop the emulator (its data is wiped) and forget the local Terra
 	# Not `terraform destroy`: it rightly refuses to delete buckets that hold data
 	$(AWS_LOCAL) down -v
 	rm -f infra/terraform/terraform.tfstate infra/terraform/terraform.tfstate.backup
+
+# Databricks: settings in .env.databricks (git-ignored, see .env.databricks.example);
+# auth is your Databricks CLI login. DuckDB stays the default everywhere else.
+DATABRICKS_ENV := set -a && . ./.env.databricks && set +a &&
+
+databricks-load:  ## Load data/raw/*.csv into Unity Catalog (volume + COPY INTO; reruns load nothing)
+	$(DATABRICKS_ENV) uv run python scripts/databricks_load_raw.py
+
+databricks-build:  ## dbt build on Databricks (target databricks), after databricks-load
+	$(DATABRICKS_ENV) uv run dbt build --target databricks
+
+check-databricks:  ## Prove Gold is identical on DuckDB and Databricks, row for row (after make build)
+	$(DATABRICKS_ENV) uv run python scripts/compare_engines.py
 
 # Airflow runs in its own environment (airflow/.venv), state in airflow/.airflow
 AIRFLOW_ENV := AIRFLOW_HOME=$(CURDIR)/airflow/.airflow AIRFLOW__CORE__DAGS_FOLDER=$(CURDIR)/airflow/dags \

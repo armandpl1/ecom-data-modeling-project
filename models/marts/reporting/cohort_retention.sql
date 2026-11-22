@@ -42,6 +42,12 @@ as_of as (
 
 ),
 
+offsets as (
+
+    {{ integer_range(0, 1000, 'months_since_first_order') }}
+
+),
+
 grid as (
 
     select
@@ -50,10 +56,9 @@ grid as (
         offsets.months_since_first_order
     from cohort_sizes
     cross join as_of
-    cross join
-        range(0, 1000) as offsets (months_since_first_order)
+    cross join offsets
     where
-        cohort_sizes.cohort_month + to_months(offsets.months_since_first_order::integer)
+        {{ add_months_to('cohort_sizes.cohort_month', 'cast(offsets.months_since_first_order as integer)') }}
         <= as_of.as_of_month
 
 ),
@@ -62,8 +67,8 @@ active as (
 
     select
         cohorts.cohort_month,
-        date_diff('month', cohorts.cohort_month, orders.order_month) as months_since_first_order,
-        count(distinct orders.customer_id)                           as active_customers
+        {{ months_between('cohorts.cohort_month', 'orders.order_month') }} as months_since_first_order,
+        count(distinct orders.customer_id)                                 as active_customers
     from orders
     inner join cohorts on orders.customer_id = cohorts.customer_id
     group by cohorts.cohort_month, months_since_first_order

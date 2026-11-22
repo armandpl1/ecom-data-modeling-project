@@ -24,6 +24,12 @@ vars:
   # missed runs; beyond that, run `dbt build --full-refresh`.
   incremental_lookback_hours: 72
 
+# Unity Catalog governance (Databricks only; no-ops on DuckDB)
+on-run-start:
+  - "{{ create_pii_mask_function() }}"
+on-run-end:
+  - "{{ grant_read_access() }}"
+
 models:
   ecom:
     # Bronze: cleaned, typed, deduplicated copies of the raw extracts
@@ -46,7 +52,8 @@ models:
 data_tests:
   ecom:
     # Save the failing rows of each test as a view in the test_failures
-    # schema, so a failure can be inspected with plain SQL.
+    # schema, so a failure can be inspected with plain SQL. Not on
+    # Databricks (macros/should_store_failures.sql).
     +store_failures: true
     +store_failures_as: view
     +schema: test_failures
