@@ -13,12 +13,15 @@
 with order_changes as (
 
     select * from {{ ref('stg_orders') }}
-    where not is_deleted
+    where
+        not is_deleted
     {% if is_incremental() %}
-      and order_id in (
-          select order_id from {{ ref('stg_orders') }}
-          where ingested_at > (select max(_max_ingested_at) from {{ this }})
-      )
+            and order_id in (
+                select changed.order_id from {{ ref('stg_orders') }} as changed
+                where
+                    changed.ingested_at
+                    > (select max(existing._max_ingested_at) from {{ this }} as existing)
+            )
     {% endif %}
 
 ),
@@ -63,17 +66,19 @@ select
     latest_state.unit_price,
     latest_state.discount_pct,
     cast(latest_state.quantity * latest_state.unit_price as decimal(12, 2))
-                                                   as gross_amount,
-    cast(latest_state.quantity * latest_state.unit_price - latest_state.order_total
-         as decimal(12, 2))                        as discount_amount,
-    latest_state.order_total                       as net_amount,
+        as gross_amount,
+    cast(
+        latest_state.quantity * latest_state.unit_price - latest_state.order_total
+        as decimal(12, 2)
+    )                                                  as discount_amount,
+    latest_state.order_total                           as net_amount,
 
     latest_state.order_placed_at,
     lifecycle.shipped_at,
     lifecycle.delivered_at,
     lifecycle.cancelled_at,
     lifecycle.returned_at,
-    latest_state.updated_at                        as last_updated_at,
+    latest_state.updated_at                            as last_updated_at,
     lifecycle.last_loaded_at,
     lifecycle.change_count,
     lifecycle._max_ingested_at,

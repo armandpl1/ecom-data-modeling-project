@@ -12,7 +12,7 @@ with source as (
     select * from {{ source('raw', 'orders') }}
     {% if is_incremental() %}
     -- Incremental: only rows from loads newer than anything already here
-    where _ingested_at > (select max(ingested_at) from {{ this }})
+        where _ingested_at > (select max(existing.ingested_at) from {{ this }} as existing)
     {% endif %}
 
 ),
@@ -20,25 +20,25 @@ with source as (
 cleaned as (
 
     select
-        trim(order_id)                           as order_id,
-        trim(customer_id)                        as customer_id,
-        trim(product_id)                         as product_id,
-        cast(quantity as integer)                as quantity,
-        cast(unit_price as decimal(10, 2))       as unit_price,
+        trim(order_id)                      as order_id,
+        trim(customer_id)                   as customer_id,
+        trim(product_id)                    as product_id,
+        cast(quantity as integer)           as quantity,
+        cast(unit_price as decimal(10, 2))  as unit_price,
         coalesce(cast(discount_pct as decimal(5, 4)), 0)
-                                                 as discount_pct,
-        cast(order_total as decimal(12, 2))      as order_total,
-        upper(trim(currency))                    as currency,
-        lower(trim(payment_method))              as payment_method,
-        lower(trim(status))                      as order_status,
+            as discount_pct,
+        cast(order_total as decimal(12, 2)) as order_total,
+        upper(trim(currency))               as currency,
+        lower(trim(payment_method))         as payment_method,
+        lower(trim(status))                 as order_status,
 
-        cast(order_placed_at as timestamp)       as order_placed_at,
-        cast(updated_at as timestamp)            as updated_at,
-        _op                                      as source_operation,
-        _op = 'D'                                as is_deleted,
-        cast(_loaded_at as timestamp)            as loaded_at,
-        _batch_id                                            as batch_id,
-        _ingested_at                                         as ingested_at
+        cast(order_placed_at as timestamp)  as order_placed_at,
+        cast(updated_at as timestamp)       as updated_at,
+        _op                                 as source_operation,
+        _op = 'D'                           as is_deleted,
+        cast(_loaded_at as timestamp)       as loaded_at,
+        _batch_id                           as batch_id,
+        _ingested_at                        as ingested_at
 
     from source
 
@@ -50,12 +50,12 @@ candidates as (
     {% if is_incremental() %}
     -- Rows already here for the same (key, updated_at) compete with the new
     -- ones, so the row loaded last still wins across runs
-    union all by name
-    select * from {{ this }} as existing
-    where exists (
-        select 1 from cleaned as new
-        where new.order_id = existing.order_id and new.updated_at = existing.updated_at
-    )
+        union all by name
+        select * from {{ this }} as existing
+        where exists (
+            select 1 from cleaned as new
+            where new.order_id = existing.order_id and new.updated_at = existing.updated_at
+        )
     {% endif %}
 
 )

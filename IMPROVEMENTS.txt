@@ -23,7 +23,7 @@ solution, and alternatives that were considered.
 | 8  | No reporting marts                     | Medium | Medium | 8        |
 | 9  | Personal data is unmasked (done)       | Medium | Small  | 9        |
 | 10 | No monitoring or alerting (done)       | Medium | Medium | 10       |
-| 11 | SQL is not linted                      | Low    | Small  | 11       |
+| 11 | SQL is not linted (done)               | Low    | Small  | 11       |
 | 12 | SQL is tied to DuckDB                  | Low    | Medium | 12       |
 | 13 | Single-product orders only             | Low    | Small  | 13       |
 | 14 | File extracts only, no CDC (done)      | High   | Large  | 14       |
@@ -363,17 +363,12 @@ warehouse is supported first; they target cloud warehouses.
 
 ## 11. SQL is not linted
 
-**Today:** Python is linted with ruff, black and flake8, but the SQL
-models, which are most of the code, are not.
-
-**Recommended solution:** sqlfluff, run in pre-commit hooks and CI.
-
-1. Add sqlfluff and sqlfluff-templater-dbt to the dev dependencies.
-2. Add a .sqlfluff config: dialect duckdb, dbt templater, lowercase
-   keywords, trailing commas, explicit aliases.
-3. Add .pre-commit-config.yaml with ruff, black, flake8 and sqlfluff, so
-   problems are caught before commit.
-4. Add `sqlfluff lint models tests macros` to CI.
+**Status: done (Step 15 in PROJECT_STEPS.txt).** sqlfluff 4.5 with the dbt
+templater lints models, tests, macros and analyses in pre-commit and the CI
+lint job. `.sqlfluff` encodes the existing house style; four rules are left
+out on purpose (reasons in the file). The reformat left every Gold table
+identical. Still open: lint compiles the full-refresh branch only (an empty
+in-memory target), so SQL inside `is_incremental()` blocks is not linted.
 
 ---
 

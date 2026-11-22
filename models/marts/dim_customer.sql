@@ -11,25 +11,25 @@ select
     customer_sk,
     customer_id,
     {{ mask_pii('first_name', 'initial') }} || ' '
-        || {{ mask_pii('last_name', 'initial') }}           as initials,
-    {{ mask_pii('email', 'email_hash') }}                    as email_hash,
-    {{ mask_pii('email', 'email_domain') }}                  as email_domain,
-    {{ mask_pii('phone_number', 'phone_last4') }}            as phone_last4,
+    || {{ mask_pii('last_name', 'initial') }}     as initials,
+    {{ mask_pii('email', 'email_hash') }}         as email_hash,
+    {{ mask_pii('email', 'email_domain') }}       as email_domain,
+    {{ mask_pii('phone_number', 'phone_last4') }} as phone_last4,
     city,
     state,
-    {{ mask_pii('postal_code', 'zip3') }}                    as zip3,
+    {{ mask_pii('postal_code', 'zip3') }}         as zip3,
     country,
     customer_segment,
     marketing_opt_in,
     subscription_tier,
-    created_at                         as customer_created_at,
+    created_at                                    as customer_created_at,
 
     version_number,
     valid_from_timestamp,
     valid_to_timestamp,
     is_current,
     deleted_at,
-    deleted_at is not null             as is_deleted_customer
+    deleted_at is not null                        as is_deleted_customer
 
 from {{ ref('int_customers_history') }}
 where not is_deleted

@@ -35,12 +35,16 @@ with versions as (
 
 watermark as (
 
-    select product_id, max(ingested_at) as _max_ingested_at
+    select
+        product_id,
+        max(ingested_at) as _max_ingested_at
     from {{ ref('stg_products') }}
     group by product_id
 
 )
 
-select versions.*, watermark._max_ingested_at
+select
+    versions.*,
+    watermark._max_ingested_at
 from versions
 inner join watermark using (product_id)

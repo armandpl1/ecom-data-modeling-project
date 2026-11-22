@@ -23,7 +23,7 @@ Code quality checks and generator tests (the same checks CI runs):
 
 ```bash
 make hooks          # once: run the checks automatically before every commit
-make lint           # ruff, black, flake8 and file hygiene, via pre-commit
+make lint           # ruff, black, flake8, sqlfluff and file hygiene, via pre-commit
 make test           # Python tests in scripts/tests/ (dbt tests run with dbt build)
 make ci             # the whole CI pipeline, locally
 ```
@@ -862,7 +862,7 @@ test ──┘
 
 | Job           | Runs                                                                                                                                                                             | Blocks        |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| `lint`        | `uv lock --check`, then every pre-commit hook: ruff, black, flake8, file hygiene                                                                                                 | `dbt`         |
+| `lint`        | `uv lock --check`, then every pre-commit hook: ruff, black, flake8, sqlfluff (SQL style), file hygiene                                                                           | `dbt`         |
 | `test`        | `pytest` for the data generator; JUnit report uploaded                                                                                                                           | `dbt`         |
 | `dbt`         | Generate data, load the raw layer, `dbt parse`, `dbt build` (all models, data and unit tests), the incremental-vs-full-refresh check, the Dagster pipeline end to end, docs site | `deploy-docs` |
 | `deploy-docs` | Publishes the dbt docs site to GitHub Pages. Only on `main`, only after every job passes                                                                                         | (deploys)     |

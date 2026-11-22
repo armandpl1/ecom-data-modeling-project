@@ -24,21 +24,21 @@ with orders as (
 
     select * from {{ ref('int_orders_enriched') }}
     {% if is_incremental() %}
-    where _max_ingested_at >= {{ incremental_window_start() }}
+        where _max_ingested_at >= {{ incremental_window_start() }}
     {% endif %}
 
 )
 
 select
     -- Keys
-    order_id || '-1'                                              as order_line_id,
+    order_id || '-1'                                     as order_line_id,
     order_id,                                       -- degenerate dimension
-    1                                                             as order_line_number,
+    1                                                    as order_line_number,
     customer_sk,
     product_sk,
-    cast(strftime(order_placed_at, '%Y%m%d') as integer)          as order_date_key,
-    cast(strftime(shipped_at,      '%Y%m%d') as integer)          as ship_date_key,
-    cast(strftime(delivered_at,    '%Y%m%d') as integer)          as delivery_date_key,
+    cast(strftime(order_placed_at, '%Y%m%d') as integer) as order_date_key,
+    cast(strftime(shipped_at, '%Y%m%d') as integer)      as ship_date_key,
+    cast(strftime(delivered_at, '%Y%m%d') as integer)    as delivery_date_key,
     customer_id,
     product_id,
 
@@ -49,19 +49,19 @@ select
 
     -- Additive measures
     quantity,
-    gross_amount                                                  as gross_revenue,
+    gross_amount                                         as gross_revenue,
     discount_amount,
-    net_amount                                                    as net_revenue,
-    case when is_cancelled then net_amount else 0 end             as cancelled_revenue,
-    case when is_returned  then net_amount else 0 end             as returned_revenue,
+    net_amount                                           as net_revenue,
+    case when is_cancelled then net_amount else 0 end    as cancelled_revenue,
+    case when is_returned then net_amount else 0 end     as returned_revenue,
     case when is_cancelled or is_returned then 0 else net_amount end
-                                                                  as recognized_revenue,
+        as recognized_revenue,
 
     -- Non-additive measures (average them, don't sum them)
     unit_price,
     discount_pct,
-    date_diff('day', order_placed_at, shipped_at)                 as days_to_ship,
-    date_diff('day', order_placed_at, delivered_at)               as days_to_deliver,
+    date_diff('day', order_placed_at, shipped_at)        as days_to_ship,
+    date_diff('day', order_placed_at, delivered_at)      as days_to_deliver,
 
     -- Timestamps and flags
     order_placed_at,
@@ -73,6 +73,6 @@ select
     is_open,
     is_cancelled,
     is_returned,
-    delivered_at is not null and shipped_at is null              as is_missing_ship_event
+    delivered_at is not null and shipped_at is null      as is_missing_ship_event
 
 from orders

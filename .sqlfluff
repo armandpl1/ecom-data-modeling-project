@@ -1,0 +1,51 @@
+# SQL style for models/, tests/, macros/ and analyses/, checked by sqlfluff in
+# pre-commit and CI. It encodes the style the project already used:
+# lowercase everything, trailing commas, explicit AS, aliases aligned in a
+# column within each select.
+
+[sqlfluff]
+dialect = duckdb
+templater = dbt
+max_line_length = 120
+# Rules left out on purpose:
+#   AM04  `select * from {{ ref(...) }}` import CTEs are the dbt convention
+#   RF04  business column names like `status` and `date` are clearer as-is
+#   ST06  column order is semantic here: keys, then attributes, then measures
+#   ST07  `join ... using (key)` is used deliberately for same-named keys
+exclude_rules = AM04, RF04, ST06, ST07
+
+[sqlfluff:templater:dbt]
+project_dir = .
+profiles_dir = .
+# An empty in-memory database (profiles.yml): is_incremental() is always
+# false, so the result never depends on a local warehouse
+target = lint
+
+[sqlfluff:indentation]
+indent_unit = space
+tab_space_size = 4
+
+[sqlfluff:layout:type:alias_expression]
+# Line up the AS keywords of a select list in one column
+spacing_before = align
+align_within = select_clause
+align_scope = bracketed
+
+[sqlfluff:layout:type:comma]
+line_position = trailing
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+[sqlfluff:rules:capitalisation.identifiers]
+extended_capitalisation_policy = lower
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = lower
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = lower
+[sqlfluff:rules:capitalisation.types]
+extended_capitalisation_policy = lower
+
+[sqlfluff:rules:aliasing.table]
+aliasing = explicit
+[sqlfluff:rules:aliasing.column]
+aliasing = explicit

@@ -4,14 +4,29 @@
 
 with landed as (
 
-    select _batch_id as batch_id, count(*) as rows_landed
-    from {{ source('raw', 'customers') }} group by 1
+    select
+        _batch_id as batch_id,
+        count(*)  as rows_landed
+    from {{ source('raw', 'customers') }}
+    group by 1
     union all
-    select _batch_id, count(*) from {{ source('raw', 'products') }} group by 1
+    select
+        _batch_id as batch_id,
+        count(*)  as rows_landed
+    from {{ source('raw', 'products') }}
+    group by 1
     union all
-    select _batch_id, count(*) from {{ source('raw', 'orders') }} group by 1
+    select
+        _batch_id as batch_id,
+        count(*)  as rows_landed
+    from {{ source('raw', 'orders') }}
+    group by 1
     union all
-    select _batch_id, count(*) from {{ source('raw', 'subscriptions') }} group by 1
+    select
+        _batch_id as batch_id,
+        count(*)  as rows_landed
+    from {{ source('raw', 'subscriptions') }}
+    group by 1
 
 )
 
@@ -21,6 +36,7 @@ select
     log.row_count,
     coalesce(landed.rows_landed, 0) as rows_landed
 from {{ source('raw', '_load_log') }} as log
-left join landed on landed.batch_id = log.batch_id
-where log.row_count = 0
-   or log.row_count != coalesce(landed.rows_landed, 0)
+left join landed on log.batch_id = landed.batch_id
+where
+    log.row_count = 0
+    or log.row_count != coalesce(landed.rows_landed, 0)

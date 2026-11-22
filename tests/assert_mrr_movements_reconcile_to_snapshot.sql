@@ -3,7 +3,9 @@
 
 with snapshot as (
 
-    select month_start, sum(mrr) as snapshot_mrr
+    select
+        month_start,
+        sum(mrr) as snapshot_mrr
     from {{ ref('fact_subscription_mrr_monthly') }}
     group by month_start
 
@@ -21,7 +23,10 @@ movements as (
 
 )
 
-select snapshot.month_start, snapshot_mrr, movement_mrr
+select
+    snapshot.month_start,
+    snapshot.snapshot_mrr,
+    movements.movement_mrr
 from snapshot
 inner join movements using (month_start)
-where abs(snapshot_mrr - movement_mrr) > 0.01
+where abs(snapshot.snapshot_mrr - movements.movement_mrr) > 0.01
