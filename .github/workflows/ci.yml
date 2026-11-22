@@ -3,6 +3,7 @@
 #   lint ──┐
 #          ├─> dbt (build + test) ─> docs ─> deploy-docs (main only)
 #   test ──┘
+#   lint ──> slim (pull requests: changed models only, deferring to prod)
 #
 # CI (lint, test, dbt, docs) runs on every pull request and every push to main.
 # CD (deploy-docs) publishes the dbt docs site to GitHub Pages, only after a
@@ -187,6 +188,26 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # Prod is built only here, on main. Slim CI on pull requests defers
+      # to this warehouse and manifest (the "prod-state" artifact).
+      - name: Build the prod warehouse and save its state (main only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p prod-state
+          uv run python scripts/load_raw.py --database prod-state/ecom_prod.duckdb
+          ECOM_PROD_DUCKDB_PATH=prod-state/ecom_prod.duckdb \
+            uv run dbt build --target prod --target-path target/prod
+          cp target/prod/manifest.json prod-state/
+
+      - name: Upload prod state for slim CI (main only)
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: prod-state
+          path: prod-state/
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Prepare docs site
         run: |
           mkdir -p site
@@ -196,6 +217,77 @@ jobs:
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site
+          retention-days: 14
+
+  # Slim CI: build only the models a pull request changed, plus everything
+  # downstream, and read every unchanged model from the prod warehouse
+  # built on main (dbt build --select state:modified+ --defer). Not a
+  # required check: the full dbt job above still gates merges.
+  slim:
+    name: dbt slim CI (changed models)
+    if: github.event_name == 'pull_request'
+    needs: [lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read  # download the prod-state artifact from a main run
+    steps:
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Download the latest prod state from main
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+            --branch main --event push --status success --limit 1 \
+            --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$run_id" ] && gh run download "$run_id" \
+              --repo "$GITHUB_REPOSITORY" --name prod-state --dir prod-state; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Using prod state from main run $run_id"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No prod-state artifact on main yet; slim CI skipped (the full dbt job still runs)"
+          fi
+
+      - name: Build what changed, deferring to prod
+        if: steps.state.outputs.found == 'true'
+        run: |
+          mkdir -p target
+          uv run python scripts/generate_raw_data.py
+          uv run python scripts/load_raw.py --database target/ci.duckdb
+          uv run dbt build --target ci --select state:modified+ --defer --state prod-state \
+            | tee target/slim_build.txt
+          {
+            echo "### Slim CI"
+            grep -E "Done\.|Nothing to do" target/slim_build.txt || true
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload slim CI artifacts
+        if: ${{ !cancelled() && steps.state.outputs.found == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: slim-ci
+          path: |
+            target/run_results.json
+            target/slim_build.txt
+            logs/dbt.log
+          if-no-files-found: warn
           retention-days: 14
 
   deploy-docs:

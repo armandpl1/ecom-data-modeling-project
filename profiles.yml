@@ -8,6 +8,23 @@ ecom:
       # incremental-vs-full-refresh check); the default is ecom.duckdb.
       path: "{{ env_var('ECOM_DUCKDB_PATH', 'ecom.duckdb') }}"
       threads: 4
+    # Production: built only by CI on main (and a scheduled job), never by
+    # hand. Its manifest and warehouse are saved as the "prod-state" artifact
+    # that slim CI defers to.
+    prod:
+      type: duckdb
+      path: "{{ env_var('ECOM_PROD_DUCKDB_PATH', 'ecom_prod.duckdb') }}"
+      threads: 4
+    # Slim CI: builds only what a pull request changed into a scratch file,
+    # and reads every unchanged model from the prod warehouse, attached
+    # read-only under its own name (dbt build --defer --state prod-state/).
+    ci:
+      type: duckdb
+      path: "{{ env_var('ECOM_DUCKDB_PATH', 'target/ci.duckdb') }}"
+      threads: 4
+      attach:
+        - path: "{{ env_var('ECOM_PROD_STATE_DIR', 'prod-state') }}/ecom_prod.duckdb"
+          read_only: true
     # sqlfluff compiles every model against this empty in-memory database, so
     # linting never depends on (or touches) a local warehouse and gives the
     # same result locally and in CI.

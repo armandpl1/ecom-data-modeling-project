@@ -4,7 +4,7 @@
 export UV_PROJECT_ENVIRONMENT := deenv
 RUN := uv run
 
-.PHONY: help install hooks lint test data load build check-slos check-incremental check-late-dimensions iceberg check-iceberg pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag cdc-e2e
+.PHONY: help install hooks lint test data load build check-slos prod-state slim-build check-incremental check-late-dimensions iceberg check-iceberg pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag cdc-e2e
 
 help:  ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -81,6 +81,17 @@ check-iceberg:  ## Prove the Iceberg tables match Gold, read back by DuckDB's ic
 
 check-late-dimensions:  ## Prove early-arriving facts land on the unknown member, warn, then get re-pointed
 	uv run python scripts/check_late_dimensions.py
+
+prod-state:  ## Build a local prod warehouse and manifest in prod-state/ (what CI does on main)
+	mkdir -p prod-state
+	uv run python scripts/load_raw.py --database prod-state/ecom_prod.duckdb
+	ECOM_PROD_DUCKDB_PATH=prod-state/ecom_prod.duckdb uv run dbt build --target prod --target-path target/prod
+	cp target/prod/manifest.json prod-state/
+
+slim-build:  ## Build only models changed since prod-state/, reading the rest from prod (slim CI)
+	rm -f target/ci.duckdb
+	uv run python scripts/load_raw.py --database target/ci.duckdb
+	uv run dbt build --target ci --select state:modified+ --defer --state prod-state
 
 check-incremental:  ## Prove incremental runs give the same Gold tables as a full refresh
 	$(RUN) python scripts/check_incremental.py
