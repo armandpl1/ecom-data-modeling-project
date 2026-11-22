@@ -798,6 +798,33 @@ from the same loads. On the normal sample data no fact points to the
 unknown member. Only a late customer is exercised; a late product takes the
 same path.
 
+### Reporting marts
+
+`models/marts/reporting/` (schema `reporting`) answers the common business
+questions on top of the star schema, so analysts don't rewrite the logic.
+An order is a non-cancelled `order_id`, and revenue is recognized revenue
+(returns count as zero).
+
+| Model                           | Grain                                     | Answers                                                              |
+| ------------------------------- | ----------------------------------------- | -------------------------------------------------------------------- |
+| `customer_lifetime_value`       | One row per customer                      | Orders, revenue, average order value, subscription months, MRR today |
+| `customer_rfm`                  | One row per customer with revenue         | Recency, frequency and monetary scores (1-5) and a segment           |
+| `cohort_retention`              | First-order month x months since          | Share of a cohort that orders again each month                       |
+| `subscription_cohort_retention` | First paying month x months since         | Subscriptions still paying, and net MRR retention                    |
+| `repeat_purchase`               | One row per first-order month             | Repeat rate and days between orders                                  |
+
+Measured on the sample data: 1,000 customers; 944 have revenue and an RFM
+segment (211 Champions, 214 Hibernating). 25.9% of a cohort orders again in
+the month after its first order, and 86% of customers order more than once
+(median of the cohorts' median gaps: 28.7 days). After 12 months, 64.8% of
+subscriptions are still paying and keep 87.9% of their starting MRR.
+
+Every model has a declared grain, enforced contracts, uniqueness and range
+tests, and `tests/assert_reporting_reconciles_to_facts.sql` checks the
+totals against the facts: revenue, orders, ordering customers (in all three
+order marts), subscription revenue and paying subscriptions. Removing one
+customer or one cohort makes it fail.
+
 ### Star schema design choices
 
 - **Grain first.** Every fact states its grain in its model and YAML, and has a test that it is unique at that grain.

@@ -185,8 +185,10 @@ Check yourself:
 ## Stage 6: Make a change of your own (open-ended)
 
 Pick one item from IMPROVEMENTS.txt and build it. Good first choices:
-- Gap 8 (a reporting mart such as cohort retention): uses everything you
-  learned about the star schema.
+- Read models/marts/reporting/cohort_retention.sql, then build a mart of
+  your own on the star schema (for example, revenue by product category and
+  cohort), with a reconciliation test like
+  tests/assert_reporting_reconciles_to_facts.sql.
 
 Or read how Gold is published as Apache Iceberg tables
 (scripts/publish_iceberg.py, README "Open table format"): run `make iceberg`,

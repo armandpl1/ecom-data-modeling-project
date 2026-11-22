@@ -1,0 +1,263 @@
+version: 2
+
+# Reporting marts: aggregates on the star schema for dashboards and analysts.
+# Shared definitions: an order is a non-cancelled order_id; revenue is
+# recognized_revenue (returns count as zero).
+
+models:
+  - name: customer_lifetime_value
+    config:
+      contract: {enforced: true}
+    description: >
+      Grain: one row per customer. Orders, recognized revenue and
+      subscription revenue over the customer's whole history, plus today's
+      MRR. Customers with no orders or subscriptions have zeros.
+    columns:
+      - name: customer_id
+        data_type: varchar
+        description: Natural key of the customer.
+        data_tests: [unique, not_null]
+      - name: customer_segment
+        data_type: varchar
+        description: Segment on the customer's latest version. Null for a customer not in dim_customer yet.
+      - name: state
+        data_type: varchar
+        description: State on the customer's latest version.
+      - name: is_deleted_customer
+        data_type: boolean
+        description: The customer was deleted at the source (history kept).
+        data_tests: [not_null]
+      - name: first_order_at
+        data_type: timestamp
+        description: First non-cancelled order. Null without orders.
+      - name: last_order_at
+        data_type: timestamp
+        description: Latest non-cancelled order. Null without orders.
+      - name: orders
+        data_type: bigint
+        description: Number of non-cancelled orders.
+        data_tests: [not_null, not_negative]
+      - name: recognized_revenue
+        data_type: decimal(14,2)
+        description: Sum of recognized revenue over all the customer's orders.
+        data_tests: [not_null, not_negative]
+      - name: average_order_value
+        data_type: decimal(12,2)
+        description: recognized_revenue / orders. Null without orders.
+        data_tests: [not_negative]
+      - name: paying_subscription_months
+        data_type: bigint
+        description: Months in which a subscription of the customer was paying.
+        data_tests: [not_null, not_negative]
+      - name: subscription_revenue
+        data_type: decimal(14,2)
+        description: Sum of MRR over every month of every subscription of the customer.
+        data_tests: [not_null, not_negative]
+      - name: current_mrr
+        data_type: decimal(12,2)
+        description: MRR in the current month (dim_date is_current_month).
+        data_tests: [not_null, not_negative]
+      - name: lifetime_value
+        data_type: decimal(14,2)
+        description: recognized_revenue + subscription_revenue.
+        data_tests: [not_null, not_negative]
+
+  - name: customer_rfm
+    config:
+      contract: {enforced: true}
+    description: >
+      Grain: one row per customer with at least one order with revenue.
+      Recency, frequency and monetary scores are quintiles from 1 (worst)
+      to 5 (best), ties broken by customer_id; the segment comes from the
+      recency and frequency scores.
+    columns:
+      - name: customer_id
+        data_type: varchar
+        description: Natural key of the customer.
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('customer_lifetime_value')
+                field: customer_id
+      - name: last_order_date
+        data_type: date
+        description: Date of the latest order with revenue.
+        data_tests: [not_null]
+      - name: recency_days
+        data_type: bigint
+        description: Days from last_order_date to the as-of date in dim_date.
+        data_tests: [not_null, not_negative]
+      - name: frequency
+        data_type: bigint
+        description: Orders with revenue.
+        data_tests: [not_null]
+      - name: monetary
+        data_type: decimal(14,2)
+        description: Recognized revenue over all orders.
+        data_tests: [not_null, not_negative]
+      - name: recency_score
+        data_type: bigint
+        description: 5 = most recent fifth of customers.
+        data_tests: &score
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5]
+                quote: false
+      - name: frequency_score
+        data_type: bigint
+        description: 5 = most frequent fifth of customers.
+        data_tests: *score
+      - name: monetary_score
+        data_type: bigint
+        description: 5 = highest-spending fifth of customers.
+        data_tests: *score
+      - name: rfm_code
+        data_type: bigint
+        description: The three scores as one number, e.g. 545.
+        data_tests: [not_null]
+      - name: segment
+        data_type: varchar
+        description: >
+          Champions (R and F 4-5), Loyal (F 4-5), Potential loyalist (R 4-5,
+          F 2-3), New (R 4-5, F 1), At risk (R 1-2, F 3), Hibernating (R 1-2,
+          F 1-2), Needs attention (everyone else).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Champions
+                  - Loyal
+                  - Potential loyalist
+                  - New
+                  - At risk
+                  - Hibernating
+                  - Needs attention
+
+  - name: cohort_retention
+    config:
+      contract: {enforced: true}
+    description: >
+      Grain: one row per cohort month (month of a customer's first
+      non-cancelled order) and months since that order, up to the as-of
+      month. retention_rate = share of the cohort with a non-cancelled order
+      in that month.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [cohort_month, months_since_first_order]
+      - expression_is_true:
+          arguments:
+            expression: "active_customers <= cohort_customers"
+      - expression_is_true:
+          arguments:
+            expression: "months_since_first_order > 0 or retention_rate = 1"
+    columns:
+      - name: cohort_month
+        data_type: date
+        description: First day of the month of the customers' first order.
+        data_tests: [not_null]
+      - name: months_since_first_order
+        data_type: bigint
+        description: 0 for the cohort month itself.
+        data_tests: [not_null, not_negative]
+      - name: cohort_customers
+        data_type: bigint
+        description: Customers whose first order fell in cohort_month.
+        data_tests: [not_null]
+      - name: active_customers
+        data_type: bigint
+        description: Customers of the cohort with an order in that month.
+        data_tests: [not_null, not_negative]
+      - name: retention_rate
+        data_type: decimal(6,4)
+        description: active_customers / cohort_customers, from 0 to 1.
+        data_tests: [not_null, not_negative]
+
+  - name: subscription_cohort_retention
+    config:
+      contract: {enforced: true}
+    description: >
+      Grain: one row per cohort month (a subscription's first paying month)
+      and months since then, up to the last month with MRR. retention_rate
+      counts subscriptions still paying; mrr_retention compares their MRR
+      with the cohort's starting MRR (above 1 means upgrades outweigh churn).
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [cohort_month, months_since_start]
+      - expression_is_true:
+          arguments:
+            expression: "paying_subscriptions <= cohort_subscriptions"
+      - expression_is_true:
+          arguments:
+            expression: "months_since_start > 0 or (retention_rate = 1 and mrr_retention = 1)"
+    columns:
+      - name: cohort_month
+        data_type: date
+        description: First paying month of the cohort's subscriptions.
+        data_tests: [not_null]
+      - name: months_since_start
+        data_type: bigint
+        description: 0 for the cohort month itself.
+        data_tests: [not_null, not_negative]
+      - name: cohort_subscriptions
+        data_type: bigint
+        description: Subscriptions whose first paying month is cohort_month.
+        data_tests: [not_null]
+      - name: paying_subscriptions
+        data_type: bigint
+        description: Subscriptions of the cohort paying in that month.
+        data_tests: [not_null, not_negative]
+      - name: mrr
+        data_type: decimal(12,2)
+        description: MRR of the cohort's subscriptions in that month.
+        data_tests: [not_null, not_negative]
+      - name: retention_rate
+        data_type: decimal(6,4)
+        description: paying_subscriptions / cohort_subscriptions.
+        data_tests: [not_null, not_negative]
+      - name: mrr_retention
+        data_type: decimal(8,4)
+        description: mrr / the cohort's MRR in month 0 (net revenue retention).
+        data_tests: [not_null, not_negative]
+
+  - name: repeat_purchase
+    config:
+      contract: {enforced: true}
+    description: >
+      Grain: one row per cohort month (month of a customer's first
+      non-cancelled order). Repeat rate and the time between consecutive
+      orders of the cohort's customers.
+    data_tests:
+      - expression_is_true:
+          arguments:
+            expression: "repeat_customers <= customers"
+    columns:
+      - name: cohort_month
+        data_type: date
+        description: First day of the month of the customers' first order.
+        data_tests: [unique, not_null]
+      - name: customers
+        data_type: bigint
+        description: Customers whose first order fell in cohort_month.
+        data_tests: [not_null]
+      - name: repeat_customers
+        data_type: bigint
+        description: Of those, customers with two or more orders.
+        data_tests: [not_null, not_negative]
+      - name: repeat_rate
+        data_type: decimal(6,4)
+        description: repeat_customers / customers.
+        data_tests: [not_null, not_negative]
+      - name: avg_days_between_orders
+        data_type: decimal(8,1)
+        description: Mean days between consecutive orders. Null if no customer repeated.
+        data_tests: [not_negative]
+      - name: median_days_between_orders
+        data_type: decimal(8,1)
+        description: Median days between consecutive orders.
+        data_tests: [not_negative]
