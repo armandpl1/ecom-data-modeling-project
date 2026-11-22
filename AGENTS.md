@@ -73,6 +73,8 @@ on every change.
 - **Every job has a timeout** and uploads what's needed to debug a failure.
 - **Don't rename CI job names** without also updating the branch ruleset's
   required checks.
+- **`--target prod` runs only in CI on `main`.** Locally, use the default
+  `dev` target, or `make prod-state` and `make slim-build` to try slim CI.
 - **Validate workflow changes** with actionlint:
   `uvx --from actionlint-py actionlint .github/workflows/ci.yml`
 - **Merging to `main` redeploys the docs site:**

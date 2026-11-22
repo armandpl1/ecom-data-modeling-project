@@ -16,7 +16,7 @@ solution, and alternatives that were considered.
 | 1  | No persistent raw layer (done)         | High   | Small  | 1        |
 | 2  | Full rebuild on every run (done)       | High   | Medium | 2        |
 | 3  | No orchestration (done)                | High   | Medium | 3        |
-| 4  | One environment, CI rebuilds all       | Medium | Small  | 4        |
+| 4  | One environment (done)                 | Medium | Small  | 4        |
 | 5  | No schema contracts on Gold (done)     | Medium | Small  | 5        |
 | 6  | No unknown-member rows (done)          | Medium | Small  | 6        |
 | 7  | No metrics layer (done)                | Medium | Medium | 7        |
@@ -198,31 +198,13 @@ freshness, then build), retries, failure alerts and a history of runs.
 
 ## 4. One environment, and CI rebuilds everything
 
-**Today:** profiles.yml has a single `dev` target. CI builds every model
-on every pull request.
-
-**Why it matters:** dev work can overwrite production tables, and CI time
-grows with the project.
-
-**Recommended solution:** separate targets, and "slim CI" that builds only
-what changed.
-
-1. In profiles.yml, add targets:
-   - `dev`: ecom_dev.duckdb (local)
-   - `ci`: a temporary database per run
-   - `prod`: ecom.duckdb or MotherDuck (hosted DuckDB)
-2. After each prod run, save target/manifest.json (as a CI artifact or in
-   storage).
-3. In CI, download the prod manifest and run:
-
-       dbt build --select state:modified+ --defer --state prod-artifacts/
-
-   This builds the changed models and everything downstream, and reads
-   unchanged upstream models from prod.
-4. Add `--target prod` only to the scheduled job, never to local commands.
-
-**Alternative:** dbt Cloud provides environments and slim CI built in, at
-a cost.
+**Status: done (Step 18 in PROJECT_STEPS.txt).** Targets dev (ecom.duckdb),
+prod (ecom_prod.duckdb, built only by CI on main and saved with its manifest
+as the prod-state artifact) and ci (a scratch file with prod attached
+read-only). The slim CI job runs `dbt build --select state:modified+ --defer
+--state prod-state/` on pull requests. Still open: the full dbt job is still
+the required check (the project builds in under a minute), and prod is a
+file in an artifact rather than a hosted warehouse such as MotherDuck.
 
 ---
 

@@ -1001,12 +1001,46 @@ lint ──┐
 test ──┘
 ```
 
-| Job           | Runs                                                                                                                                                                                                            | Blocks        |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| `lint`        | `uv lock --check`, then every pre-commit hook: ruff, black, flake8, sqlfluff (SQL style), file hygiene                                                                                                          | `dbt`         |
-| `test`        | `pytest` for the data generator; JUnit report uploaded                                                                                                                                                          | `dbt`         |
-| `dbt`         | Generate data, load the raw layer, `dbt parse`, `dbt build` (all models, data and unit tests), the Iceberg publish and check, the incremental-vs-full-refresh check, the Dagster pipeline end to end, docs site | `deploy-docs` |
-| `deploy-docs` | Publishes the dbt docs site to GitHub Pages. Only on `main`, only after every job passes                                                                                                                        | (deploys)     |
+| Job           | Runs                                                                                                                                                                                                            | Blocks                 |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| `lint`        | `uv lock --check`, then every pre-commit hook: ruff, black, flake8, sqlfluff (SQL style), file hygiene                                                                                                          | `dbt`                  |
+| `test`        | `pytest` for the data generator; JUnit report uploaded                                                                                                                                                          | `dbt`                  |
+| `dbt`         | Generate data, load the raw layer, `dbt parse`, `dbt build` (all models, data and unit tests), the Iceberg publish and check, the incremental-vs-full-refresh check, the Dagster pipeline end to end, docs site | `deploy-docs`          |
+| `slim`        | Pull requests only: `dbt build --select state:modified+ --defer` against the prod warehouse built on `main` (see Environments below)                                                                            | nothing (not required) |
+| `deploy-docs` | Publishes the dbt docs site to GitHub Pages. Only on `main`, only after every job passes                                                                                                                        | (deploys)              |
+
+**Environments and slim CI.** `profiles.yml` has three targets:
+
+| Target | Warehouse                                        | Built by                         |
+| ------ | ------------------------------------------------ | -------------------------------- |
+| `dev`  | `ecom.duckdb` (the default)                      | You, locally                     |
+| `prod` | `ecom_prod.duckdb`                               | CI on `main` only, never by hand |
+| `ci`   | `target/ci.duckdb`, with prod attached read-only | The `slim` job on pull requests  |
+
+After the full build on `main`, CI builds the prod warehouse and uploads it
+with its manifest as the `prod-state` artifact. On a pull request, the
+`slim` job downloads the latest one and runs
+`dbt build --select state:modified+ --defer --state prod-state/`: it
+builds only the changed models and everything downstream, and reads every
+unchanged model from prod. A relationships test on a rebuilt `dim_product`,
+for example, reads `fact_orders` from `ecom_prod.gold`.
+
+Measured locally (`make prod-state`, change one file, `make slim-build`):
+
+| Change                            | Nodes built (of 258) | Time, raw load included |
+| --------------------------------- | -------------------- | ----------------------- |
+| None                              | 0 ("Nothing to do")  | 5.9 s                   |
+| `dim_product` (a Gold dimension)  | 13                   | 10.3 s                  |
+| `customer_rfm` (a reporting mart) | 19                   | 10.7 s                  |
+| `stg_orders` (a Bronze model)     | 157                  | 37.0 s                  |
+| Full build (`make build`)         | 258                  | 40.8 s                  |
+
+The full `dbt` job still gates every merge: this project builds in under a
+minute, so slim CI is the pattern that keeps CI fast as models are added,
+not a time saver yet. Until `main` has produced a `prod-state` artifact, the
+`slim` job says so and skips. Prod is a DuckDB file here; with a hosted
+warehouse (MotherDuck, Snowflake) the `ci` target would point at it instead
+of attaching a file.
 
 Production practices in the pipeline:
 
@@ -1031,6 +1065,8 @@ make test      # unit tests
 make build     # generate data, load the raw layer, dbt parse, dbt build
 make pipeline  # the same, orchestrated by Dagster
 make check-incremental  # incremental runs vs a full refresh: Gold must be identical
+make prod-state         # build a local prod warehouse and manifest (what CI does on main)
+make slim-build         # build only what changed since prod-state/, deferring to prod
 make check-late-dimensions  # early-arriving facts: unknown member, warning, then re-pointed
 make check-slos         # service-level objectives; each breach names its runbook
 make metrics            # validate the semantic layer and export dashboard datasets

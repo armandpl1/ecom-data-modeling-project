@@ -486,6 +486,31 @@ SQL with one customer or one cohort removed reports the mismatch.
 
 ---
 
+## Step 18: Environments and slim CI ✅
+
+**Goal:** keep dev work away from production, and build only what a pull
+request changed (gap 4 in IMPROVEMENTS.txt).
+
+1. profiles.yml targets: `dev` (ecom.duckdb, the default), `prod`
+   (ecom_prod.duckdb), `ci` (target/ci.duckdb with prod-state/ecom_prod.duckdb
+   attached read-only), plus the `lint` target from Step 15.
+2. CI on main: after the full build, build prod with `--target prod` and
+   upload `prod-state/` (warehouse + manifest.json, 30 days).
+3. New CI job `slim` on pull requests: download the latest prod-state from a
+   successful main run (`gh run download`), load raw into the ci warehouse,
+   `dbt build --target ci --select state:modified+ --defer --state
+   prod-state`. Skips with a notice when there is no artifact yet. Not a
+   required check.
+4. `make prod-state` and `make slim-build` do the same locally.
+
+**Check:** `make prod-state`, then add a comment to one model and run
+`make slim-build`: 19 of 258 nodes for a reporting mart, 13 for dim_product,
+157 for stg_orders; with no change, "Nothing to do". The compiled
+relationships test of a rebuilt dim_product reads fact_orders from
+ecom_prod.gold.
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in
