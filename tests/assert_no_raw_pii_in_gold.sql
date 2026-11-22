@@ -9,11 +9,14 @@
 -- depends_on: {{ ref('fact_subscriptions') }}
 -- depends_on: {{ ref('fact_subscription_mrr_monthly') }}
 
-select table_name, column_name
+select
+    table_name,
+    column_name
 from information_schema.columns
-where table_schema = 'gold'
-  and lower(column_name) in (
-      'first_name', 'last_name', 'full_name', 'email', 'phone', 'phone_number',
-      'phone_raw', 'phone_digits', 'phone_extension', 'street_address',
-      'postal_code'
-  )
+where
+    table_schema = 'gold'
+    and lower(column_name) in (
+        'first_name', 'last_name', 'full_name', 'email', 'phone', 'phone_number',
+        'phone_raw', 'phone_digits', 'phone_extension', 'street_address',
+        'postal_code'
+    )

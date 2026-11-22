@@ -45,8 +45,13 @@ with versions as (
 subscription_ingestion as (
 
     -- Newest ingestion of any subscription ever linked to the customer
-    select links.customer_id, max(subs.ingested_at) as ingested_at
-    from (select distinct customer_id, subscription_id from {{ ref('stg_subscriptions') }}) as links
+    select
+        links.customer_id,
+        max(subs.ingested_at) as ingested_at
+    from (select distinct
+        customer_id,
+        subscription_id
+    from {{ ref('stg_subscriptions') }}) as links
     inner join {{ ref('stg_subscriptions') }} as subs using (subscription_id)
     group by links.customer_id
 
@@ -64,6 +69,8 @@ watermark as (
 
 )
 
-select versions.*, watermark._max_ingested_at
+select
+    versions.*,
+    watermark._max_ingested_at
 from versions
 inner join watermark using (customer_id)

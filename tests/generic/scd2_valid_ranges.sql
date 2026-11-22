@@ -77,7 +77,7 @@ problems as (
 
     select entity_key, valid_from, valid_to, 'current flag does not match open-ended valid_to'
     from versions
-    where current_flag is distinct from (valid_to is null)
+    where (current_flag is distinct from (valid_to is null))
     {% endif %}
 
     {% if deleted_at %}
@@ -87,7 +87,7 @@ problems as (
     from versions
     where next_valid_from is null
       and deleted_at is not null
-      and valid_to is distinct from deleted_at
+      and (valid_to is distinct from deleted_at)
     {% endif %}
 
 )

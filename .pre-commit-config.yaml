@@ -3,7 +3,7 @@
 # Set up once:   uv run pre-commit install
 # Run by hand:   uv run pre-commit run --all-files
 #
-# Python linters run through `uv run`, so they use exactly the versions pinned
+# Python and SQL linters run through `uv run`, so they use exactly the versions pinned
 # in uv.lock: the same tools and versions locally and in CI.
 
 repos:
@@ -39,6 +39,14 @@ repos:
         language: system
         types: [python]
         files: ^scripts/
+
+      - id: sqlfluff
+        name: sqlfluff (SQL style, .sqlfluff)
+        entry: uv run sqlfluff lint
+        language: system
+        types: [sql]
+        files: ^(models|tests|macros|analyses)/
+        require_serial: true
 
       - id: uv-lock
         name: uv.lock is up to date

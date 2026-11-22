@@ -8,3 +8,10 @@ ecom:
       # incremental-vs-full-refresh check); the default is ecom.duckdb.
       path: "{{ env_var('ECOM_DUCKDB_PATH', 'ecom.duckdb') }}"
       threads: 4
+    # sqlfluff compiles every model against this empty in-memory database, so
+    # linting never depends on (or touches) a local warehouse and gives the
+    # same result locally and in CI.
+    lint:
+      type: duckdb
+      path: ":memory:"
+      threads: 1

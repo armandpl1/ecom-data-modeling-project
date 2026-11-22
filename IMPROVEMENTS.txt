@@ -18,12 +18,12 @@ solution, and alternatives that were considered.
 | 3  | No orchestration (done)                | High   | Medium | 3        |
 | 4  | One environment, CI rebuilds all       | Medium | Small  | 4        |
 | 5  | No schema contracts on Gold (done)     | Medium | Small  | 5        |
-| 6  | No unknown-member rows                 | Medium | Small  | 6        |
+| 6  | No unknown-member rows (done)          | Medium | Small  | 6        |
 | 7  | No metrics layer (done)                | Medium | Medium | 7        |
 | 8  | No reporting marts                     | Medium | Medium | 8        |
 | 9  | Personal data is unmasked (done)       | Medium | Small  | 9        |
 | 10 | No monitoring or alerting (done)       | Medium | Medium | 10       |
-| 11 | SQL is not linted                      | Low    | Small  | 11       |
+| 11 | SQL is not linted (done)               | Low    | Small  | 11       |
 | 12 | SQL is tied to DuckDB                  | Low    | Medium | 12       |
 | 13 | Single-product orders only             | Low    | Small  | 13       |
 | 14 | File extracts only, no CDC (done)      | High   | Large  | 14       |
@@ -254,19 +254,12 @@ breaks.
 
 ## 6. No unknown-member rows in dimensions
 
-**Today:** every fact finds its customer and product version, and tests
-require it. If an order arrives before its customer (an early-arriving
-fact), the build fails or the key is null.
-
-**Recommended solution:** the standard Kimball unknown member.
-
-1. Add a row to dim_customer and dim_product with key '-1' and labels such
-   as 'Unknown', valid from the start of time and never current.
-2. In the facts: coalesce(customer_sk, '-1').
-3. A warn-level test reports how many fact rows point to -1, so the data
-   gap is visible without failing the build.
-4. With incremental models (gap 2), re-point those rows once the dimension
-   row arrives, inside the look-back window.
+**Status: done (Step 16 in PROJECT_STEPS.txt).** dim_customer and dim_product
+each have an unknown member ('-1'); the facts coalesce to it; the
+unknown_member_rows test warns about every fact row on it; the next
+incremental run re-points the rows once the dimension row arrives.
+`make check-late-dimensions` proves all four on a late customer. Still open:
+a late product is not exercised by the check (it takes the same code path).
 
 ---
 
@@ -379,17 +372,12 @@ warehouse is supported first; they target cloud warehouses.
 
 ## 11. SQL is not linted
 
-**Today:** Python is linted with ruff, black and flake8, but the SQL
-models, which are most of the code, are not.
-
-**Recommended solution:** sqlfluff, run in pre-commit hooks and CI.
-
-1. Add sqlfluff and sqlfluff-templater-dbt to the dev dependencies.
-2. Add a .sqlfluff config: dialect duckdb, dbt templater, lowercase
-   keywords, trailing commas, explicit aliases.
-3. Add .pre-commit-config.yaml with ruff, black, flake8 and sqlfluff, so
-   problems are caught before commit.
-4. Add `sqlfluff lint models tests macros` to CI.
+**Status: done (Step 15 in PROJECT_STEPS.txt).** sqlfluff 4.5 with the dbt
+templater lints models, tests, macros and analyses in pre-commit and the CI
+lint job. `.sqlfluff` encodes the existing house style; four rules are left
+out on purpose (reasons in the file). The reformat left every Gold table
+identical. Still open: lint compiles the full-refresh branch only (an empty
+in-memory target), so SQL inside `is_incremental()` blocks is not linted.
 
 ---
 

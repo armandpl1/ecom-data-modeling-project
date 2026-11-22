@@ -4,7 +4,7 @@
 export UV_PROJECT_ENVIRONMENT := deenv
 RUN := uv run
 
-.PHONY: help install hooks lint test data load build check-slos check-incremental iceberg check-iceberg pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag cdc-e2e
+.PHONY: help install hooks lint test data load build check-slos check-incremental check-late-dimensions iceberg check-iceberg pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag cdc-e2e
 
 help:  ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -78,6 +78,9 @@ iceberg:  ## Publish the Gold tables as Apache Iceberg tables in data/lakehouse 
 
 check-iceberg:  ## Prove the Iceberg tables match Gold, read back by DuckDB's iceberg extension
 	uv run python scripts/check_iceberg.py
+
+check-late-dimensions:  ## Prove early-arriving facts land on the unknown member, warn, then get re-pointed
+	uv run python scripts/check_late_dimensions.py
 
 check-incremental:  ## Prove incremental runs give the same Gold tables as a full refresh
 	$(RUN) python scripts/check_incremental.py

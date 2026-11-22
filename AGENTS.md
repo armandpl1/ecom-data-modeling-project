@@ -37,6 +37,10 @@ on every change.
   `scd2_valid_ranges` test.
 - **Known data gaps warn; broken rules fail.** Use `severity: warn` only for
   a documented, self-healing data issue.
+- **SQL style:** sqlfluff with the rules in `.sqlfluff` (lowercase, trailing
+  commas, explicit `as`, aliases aligned per select), also a pre-commit hook.
+  `uv run sqlfluff fix <file>` applies most fixes. Qualify columns in
+  subqueries so they can't bind to the outer query by accident.
 
 ## Python standards
 

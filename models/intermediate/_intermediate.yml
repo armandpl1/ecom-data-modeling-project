@@ -98,7 +98,17 @@ models:
     columns:
       - name: order_id
         data_tests: [unique, not_null]
+      # Null when the order arrives before its customer or product version (an
+      # early-arriving fact): a documented, self-healing gap, so it warns. Gold
+      # points those rows to the unknown member and the next incremental run
+      # re-points them (scripts/check_late_dimensions.py).
       - name: customer_sk
-        data_tests: [not_null]
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
       - name: product_sk
-        data_tests: [not_null]
+        data_tests:
+          - not_null:
+              config:
+                severity: warn

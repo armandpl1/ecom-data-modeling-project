@@ -415,6 +415,56 @@ on `fact_orders` plans 1 of 34 data files.
 
 ---
 
+## Step 15: SQL linting with sqlfluff ✅
+
+**Goal:** lint the SQL, which is most of the code, like the Python (gap 11
+in IMPROVEMENTS.txt).
+
+1. sqlfluff 4.5 and sqlfluff-templater-dbt in the dev dependencies.
+2. `.sqlfluff`: DuckDB dialect, dbt templater, the house style (lowercase,
+   trailing commas, explicit aliases, `as` aligned per select). AM04, RF04,
+   ST06 and ST07 are left out; the file says why.
+3. A `lint` target in profiles.yml (empty, in memory) for the templater, so
+   the result never depends on a local warehouse.
+4. A pre-commit hook over models, tests, macros and analyses, which also
+   runs in the CI lint job.
+5. All 35 SQL files reformatted. Real findings fixed by hand: columns in
+   subqueries qualified (an unqualified one can bind to the outer query),
+   union branches and a derived table aliased. `is distinct from` is
+   parenthesized because sqlfluff's DuckDB grammar can't parse it bare.
+
+**Check:** `uv run pre-commit run sqlfluff --all-files` passes; an uppercase
+`SELECT` in a model fails it with CP01. Every Gold table fingerprint was
+identical before and after the reformat, and `make check-incremental` still
+finds 7 of 7 tables identical.
+
+---
+
+## Step 16: Unknown members for early-arriving facts ✅
+
+**Goal:** an order that arrives before its customer must not break the build
+or vanish (gap 6 in IMPROVEMENTS.txt).
+
+1. `macros/unknown_member_key.sql`: the key `'-1'`.
+2. `dim_customer` and `dim_product`: one unknown row each (`union all by
+   name`), labels 'Unknown', valid 1900 to 9999, never current. Accepted
+   values gain 'unknown' (tier) and 'Unknown' (category); the product
+   not_null tests on unit_price and launch_date skip the unknown row.
+3. `fact_orders`, `fact_subscriptions`, `fact_subscription_mrr_monthly`:
+   `coalesce(<key>, '-1')`.
+4. `tests/generic/unknown_member_rows.sql`, at severity warn on every fact
+   key. The Silver not_null tests on int_orders_enriched's keys now warn,
+   and the point-in-time singular test skips the unknown member.
+5. `scripts/check_late_dimensions.py` (`make check-late-dimensions`, in CI)
+   and its unit tests.
+
+**Check:** `make check-late-dimensions`: 108 fact rows of a late customer on
+the unknown member with 3 warnings after load 1; 0 after the incremental
+load 2; 7 of 7 tables equal to a full rebuild. `make build` on the sample
+data: the 4 new tests pass (no fact on the unknown member).
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in

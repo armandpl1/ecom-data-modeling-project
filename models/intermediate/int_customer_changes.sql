@@ -20,9 +20,15 @@ tier_history as (
 
 change_points as (
 
-    select customer_id, updated_at as changed_at from profile_changes
+    select
+        customer_id,
+        updated_at as changed_at
+    from profile_changes
     union
-    select customer_id, valid_from_timestamp from tier_history
+    select
+        customer_id,
+        valid_from_timestamp
+    from tier_history
 
 ),
 
@@ -30,25 +36,28 @@ state_at_change as (
 
     select
         profile.* exclude (updated_at),
-        change_points.changed_at                      as updated_at,
-        coalesce(tier.subscription_tier, 'none')     as subscription_tier
+        change_points.changed_at                 as updated_at,
+        coalesce(tier.subscription_tier, 'none') as subscription_tier
     from change_points
     -- Latest profile row at or before the change point
     asof join profile_changes as profile
-        on  change_points.customer_id = profile.customer_id
-        and change_points.changed_at >= profile.updated_at
+        on
+            change_points.customer_id = profile.customer_id
+            and change_points.changed_at >= profile.updated_at
     -- Tier in effect at the change point (none if never subscribed)
     asof left join tier_history as tier
-        on  change_points.customer_id = tier.customer_id
-        and change_points.changed_at >= tier.valid_from_timestamp
+        on
+            change_points.customer_id = tier.customer_id
+            and change_points.changed_at >= tier.valid_from_timestamp
 
 )
 
 select *
 from state_at_change
 -- After a delete, keep only the delete itself
-where not is_deleted
-   or updated_at = (
-        select min(d.updated_at) from profile_changes d
+where
+    not is_deleted
+    or updated_at = (
+        select min(d.updated_at) from profile_changes as d
         where d.customer_id = state_at_change.customer_id and d.is_deleted
-   )
+    )

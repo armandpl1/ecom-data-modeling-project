@@ -185,8 +185,6 @@ Check yourself:
 ## Stage 6: Make a change of your own (open-ended)
 
 Pick one item from IMPROVEMENTS.txt and build it. Good first choices:
-- Gap 6 (unknown-member rows): small, touches dimensions, facts and tests.
-- Gap 11 (SQL linting with sqlfluff): small, touches tooling and CI.
 - Gap 8 (a reporting mart such as cohort retention): uses everything you
   learned about the star schema.
 
