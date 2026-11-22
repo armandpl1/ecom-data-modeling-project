@@ -52,7 +52,7 @@ select
     state_at_month_end.month_start,
     state_at_month_end.subscription_id,
     state_at_month_end.customer_id,
-    customers.customer_sk,
+    coalesce(customers.customer_sk, {{ unknown_member_key() }}) as customer_sk,
 
     state_at_month_end.plan_name,
     state_at_month_end.billing_period,
@@ -65,7 +65,7 @@ select
         when state_at_month_end.subscription_status in ('active', 'past_due')
             then state_at_month_end.mrr
         else 0
-    end as mrr,
+    end                                                         as mrr,
     state_at_month_end.subscription_status in ('active', 'past_due')
         as is_paying
 

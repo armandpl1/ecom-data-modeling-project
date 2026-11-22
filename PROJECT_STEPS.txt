@@ -433,6 +433,31 @@ finds 7 of 7 tables identical.
 
 ---
 
+## Step 16: Unknown members for early-arriving facts ✅
+
+**Goal:** an order that arrives before its customer must not break the build
+or vanish (gap 6 in IMPROVEMENTS.txt).
+
+1. `macros/unknown_member_key.sql`: the key `'-1'`.
+2. `dim_customer` and `dim_product`: one unknown row each (`union all by
+   name`), labels 'Unknown', valid 1900 to 9999, never current. Accepted
+   values gain 'unknown' (tier) and 'Unknown' (category); the product
+   not_null tests on unit_price and launch_date skip the unknown row.
+3. `fact_orders`, `fact_subscriptions`, `fact_subscription_mrr_monthly`:
+   `coalesce(<key>, '-1')`.
+4. `tests/generic/unknown_member_rows.sql`, at severity warn on every fact
+   key. The Silver not_null tests on int_orders_enriched's keys now warn,
+   and the point-in-time singular test skips the unknown member.
+5. `scripts/check_late_dimensions.py` (`make check-late-dimensions`, in CI)
+   and its unit tests.
+
+**Check:** `make check-late-dimensions`: 108 fact rows of a late customer on
+the unknown member with 3 warnings after load 1; 0 after the incremental
+load 2; 7 of 7 tables equal to a full rebuild. `make build` on the sample
+data: the 4 new tests pass (no fact on the unknown member).
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in

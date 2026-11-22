@@ -6,6 +6,10 @@
 -- Personal data is masked here (macros/mask_pii.sql): no names, email, phone
 -- or street address. The raw values, for the few who need them, are in
 -- restricted.dim_customer_pii with the same customer_sk.
+--
+-- The last row is the unknown member (customer_sk '-1'): facts whose customer
+-- version isn't known yet point to it (macros/unknown_member_key.sql). Its
+-- validity range is closed, so it is never current.
 
 select
     customer_sk,
@@ -33,3 +37,20 @@ select
 
 from {{ ref('int_customers_history') }}
 where not is_deleted
+
+union all by name
+
+select
+    {{ unknown_member_key() }}      as customer_sk,
+    {{ unknown_member_key() }}      as customer_id,
+    'Unknown'                       as initials,
+    'Unknown'                       as city,
+    'Unknown'                       as state,
+    'Unknown'                       as country,
+    'Unknown'                       as customer_segment,
+    'unknown'                       as subscription_tier,
+    0                               as version_number,
+    timestamp '1900-01-01 00:00:00' as valid_from_timestamp,
+    timestamp '9999-12-31 00:00:00' as valid_to_timestamp,
+    false                           as is_current,
+    false                           as is_deleted_customer

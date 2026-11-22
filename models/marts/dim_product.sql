@@ -3,6 +3,9 @@
 -- product_sk see the product as it was at the time of the event.
 -- Launch and discontinuation dates are product-level and repeated on every
 -- version.
+--
+-- The last row is the unknown member (product_sk '-1'): facts whose product
+-- version isn't known yet point to it (macros/unknown_member_key.sql).
 
 with versions as (
 
@@ -67,3 +70,20 @@ select
 
 from versions
 inner join lifecycle using (product_id)
+
+union all by name
+
+select
+    {{ unknown_member_key() }}      as product_sk,
+    {{ unknown_member_key() }}      as product_id,
+    'Unknown'                       as product_name,
+    'Unknown'                       as product_line,
+    'Unknown'                       as product_style,
+    'Unknown'                       as product_type,
+    'Unknown'                       as category,
+    'Unknown'                       as price_band,
+    0                               as version_number,
+    timestamp '1900-01-01 00:00:00' as valid_from_timestamp,
+    timestamp '9999-12-31 00:00:00' as valid_to_timestamp,
+    false                           as is_current,
+    false                           as is_deleted_product

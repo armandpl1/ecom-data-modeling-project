@@ -115,20 +115,20 @@ customers as (
 
 select
     -- Keys
-    classified.subscription_version_sk                    as subscription_event_id,
+    classified.subscription_version_sk                          as subscription_event_id,
     classified.subscription_id,                     -- degenerate dimension
-    customers.customer_sk,
+    coalesce(customers.customer_sk, {{ unknown_member_key() }}) as customer_sk,
     cast(strftime(classified.valid_from_timestamp, '%Y%m%d') as integer)
         as event_date_key,
     classified.customer_id,
-    classified.valid_from_timestamp                       as event_at,
+    classified.valid_from_timestamp                             as event_at,
 
     -- What changed
     classified.movement_type,
     classified.status_before,
-    classified.subscription_status                        as status_after,
+    classified.subscription_status                              as status_after,
     classified.plan_before,
-    classified.plan_name                                  as plan_after,
+    classified.plan_name                                        as plan_after,
     classified.billing_period,
 
     -- Additive measures
@@ -137,11 +137,11 @@ select
         as mrr_gained,
     case when classified.mrr_change < 0 then -classified.mrr_change else 0 end
         as mrr_lost,
-    case when classified.is_churn_event then 1 else 0 end as churned_subscriptions,
+    case when classified.is_churn_event then 1 else 0 end       as churned_subscriptions,
 
     -- Semi-additive: balances, sum only within one subscription
     classified.mrr_before,
-    classified.paying_mrr                                 as mrr_after,
+    classified.paying_mrr                                       as mrr_after,
 
     -- Churn details
     classified.is_churn_event,
@@ -150,7 +150,7 @@ select
         when classified.status_before = 'trialing' then 'trial'
         when classified.status_before = 'paused' then 'paused'
         else 'paid'
-    end                                                   as churn_type
+    end                                                         as churn_type
 
 from classified
 left join customers

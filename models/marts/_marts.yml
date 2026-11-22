@@ -18,6 +18,8 @@ models:
       is_current for the present view; join on customer_sk from a fact for the
       view at the time of the event. Deleted customers keep their history and
       have is_deleted_customer = true.
+      Includes one unknown member (customer_sk '-1', labels 'Unknown', never
+      current) for facts whose customer version is not known yet.
     data_tests:
       - scd2_valid_ranges:
           arguments:
@@ -39,7 +41,7 @@ models:
         data_tests:
           - accepted_values:
               arguments:
-                values: [none, basic, plus, premium]
+                values: [none, basic, plus, premium, unknown]
       - name: valid_from_timestamp
         data_type: timestamp
         description: '{{ doc("valid_from_timestamp") }}'
@@ -108,6 +110,8 @@ models:
       Product dimension, SCD Type 2. One row per product version; price
       changes and discontinuation start a new version. Launch and
       discontinuation dates are product-level and repeated on every version.
+      Includes one unknown member (product_sk '-1', labels 'Unknown', never
+      current) for facts whose product version is not known yet.
     data_tests:
       - scd2_valid_ranges:
           arguments:
@@ -141,18 +145,25 @@ models:
         data_tests:
           - accepted_values:
               arguments:
-                values: [Apparel, Books, Electronics, Home, Outdoors]
+                values: [Apparel, Books, Electronics, Home, Outdoors, Unknown]
       - name: unit_price
         data_type: decimal(10,2)
-        description: List price of this version.
-        data_tests: [not_null, not_negative]
+        description: List price of this version. Null only on the unknown member.
+        data_tests:
+          - not_null:
+              config:
+                where: "product_sk <> '-1'"
+          - not_negative
       - name: price_band
         data_type: varchar
         description: Price range of this version's unit_price. Prefixed with a number so it sorts correctly.
       - name: launch_date
         data_type: date
-        description: Date the product was first created in the source.
-        data_tests: [not_null]
+        description: Date the product was first created in the source. Null only on the unknown member.
+        data_tests:
+          - not_null:
+              config:
+                where: "product_sk <> '-1'"
       - name: launch_date_key
         data_type: integer
         description: '{{ doc("date_key") }} Launch date.'
@@ -410,6 +421,9 @@ models:
               arguments:
                 to: ref('dim_customer')
                 field: customer_sk
+          - unknown_member_rows:
+              config:
+                severity: warn
       - name: product_sk
         data_type: varchar
         description: 'Product version valid when the order was placed. Join to dim_product.'
@@ -419,6 +433,9 @@ models:
               arguments:
                 to: ref('dim_product')
                 field: product_sk
+          - unknown_member_rows:
+              config:
+                severity: warn
       - name: order_date_key
         data_type: integer
         description: '{{ doc("date_key") }} Order date.'
@@ -569,6 +586,9 @@ models:
               arguments:
                 to: ref('dim_customer')
                 field: customer_sk
+          - unknown_member_rows:
+              config:
+                severity: warn
       - name: event_date_key
         data_type: integer
         description: '{{ doc("date_key") }} Date of the event.'
@@ -672,6 +692,9 @@ models:
               arguments:
                 to: ref('dim_customer')
                 field: customer_sk
+          - unknown_member_rows:
+              config:
+                severity: warn
       - name: month_end_date_key
         data_type: integer
         description: '{{ doc("date_key") }} Last day of the month.'

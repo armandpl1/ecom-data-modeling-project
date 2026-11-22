@@ -34,8 +34,10 @@ select
     order_id || '-1'                                     as order_line_id,
     order_id,                                       -- degenerate dimension
     1                                                    as order_line_number,
-    customer_sk,
-    product_sk,
+    -- An order whose customer or product version isn't known yet points to
+    -- the unknown member instead of failing the build (unknown_member_rows warns)
+    coalesce(customer_sk, {{ unknown_member_key() }})    as customer_sk,
+    coalesce(product_sk, {{ unknown_member_key() }})     as product_sk,
     cast(strftime(order_placed_at, '%Y%m%d') as integer) as order_date_key,
     cast(strftime(shipped_at, '%Y%m%d') as integer)      as ship_date_key,
     cast(strftime(delivered_at, '%Y%m%d') as integer)    as delivery_date_key,

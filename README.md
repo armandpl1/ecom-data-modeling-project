@@ -415,7 +415,8 @@ How it works (`scripts/publish_iceberg.py`, settings in `ops/lakehouse.yml`):
 A breaking change stops every table, not just the broken one, so the
 lakehouse never mixes two versions of the model.
 
-**Measured** on the sample data: 6 tables (14,326 rows) published in about 7
+**Measured** on the sample data: 6 tables (14,328 rows, including the two
+unknown-member rows) published in about 5
 seconds into 2.2 MB; a rerun changed 0 tables; `check-iceberg` found 6 of 6
 tables identical to Gold row for row (EXCEPT ALL both ways, so duplicates
 count), read by a different reader from the one that wrote them; a June 2025
@@ -748,6 +749,37 @@ Churn events are flagged separately (`is_churn_event`, `churned_subscriptions` =
 
 `fact_subscription_mrr_monthly` is the matching **periodic snapshot**: MRR per subscription at each month end. Use it for "MRR in month X" and use `fact_subscriptions` for "why MRR changed". Its `mrr` is semi-additive: sum across subscriptions, never across months.
 
+### Unknown members (early-arriving facts)
+
+An order can arrive before its customer: the source system exports the order
+first, or the customer's extract is late. The point-in-time join then finds
+no customer version. Before this, the key was null, a `not_null` test failed
+and the whole build stopped.
+
+Now each dimension has one **unknown member** (Kimball's standard design):
+
+- `dim_customer` and `dim_product` each get a row with key `'-1'` (from
+  `macros/unknown_member_key.sql`), labels `'Unknown'`, and a closed validity
+  range (1900 to 9999), so it is never current and passes the SCD2 tests.
+- The facts use `coalesce(customer_sk, '-1')` (and the same for
+  `product_sk`), so the build passes and the rows stay visible.
+- A warn-level generic test, `unknown_member_rows`, reports how many fact
+  rows point to the unknown member: the gap is visible without failing the
+  build. The Silver `not_null` tests on those keys warn for the same reason.
+- When the late customer arrives, the next incremental run re-points the
+  rows: the facts recompute orders and subscriptions whose customer history
+  changed in the look-back window.
+
+`make check-late-dimensions` (`scripts/check_late_dimensions.py`, also in CI)
+proves it. It loads everything except one customer and builds: the
+customer's 86 orders, 2 subscription events and 20 MRR months point to the
+unknown member, and the three `unknown_member_rows` tests warn. Then it
+loads the customer and runs a normal incremental build: 0 rows left on the
+unknown member, and all 7 Gold and restricted tables equal a full rebuild
+from the same loads. On the normal sample data no fact points to the
+unknown member. Only a late customer is exercised; a late product takes the
+same path.
+
 ### Star schema design choices
 
 - **Grain first.** Every fact states its grain in its model and YAML, and has a test that it is unique at that grain.
@@ -954,6 +986,7 @@ make test      # unit tests
 make build     # generate data, load the raw layer, dbt parse, dbt build
 make pipeline  # the same, orchestrated by Dagster
 make check-incremental  # incremental runs vs a full refresh: Gold must be identical
+make check-late-dimensions  # early-arriving facts: unknown member, warning, then re-pointed
 make check-slos         # service-level objectives; each breach names its runbook
 make metrics            # validate the semantic layer and export dashboard datasets
 make iceberg            # publish Gold as Apache Iceberg tables (then make check-iceberg)
