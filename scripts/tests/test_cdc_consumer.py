@@ -6,10 +6,14 @@ No Kafka or Docker needed: events are built by hand, as Debezium writes them.
 import json
 from pathlib import Path
 
+import cdc_consumer
+import cdc_schema
 import duckdb
 import pytest
 from cdc_consumer import (
     Event,
+    SourceTypeChanged,
+    TablesBlocked,
     drop_delete_touches,
     ensure_tables,
     format_value,
@@ -17,6 +21,7 @@ from cdc_consumer import (
     trim_partial_transaction,
     write_batch,
 )
+from cdc_schema import source_kind
 
 TS_2024 = 1_704_067_200_000_000  # 2024-01-01 00:00:00 in microseconds
 
@@ -203,3 +208,128 @@ def test_an_unsafe_column_name_is_refused(tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="unsafe column"):
             write_batch(con, "customers", [bad], {0: (0, 1)})
         assert con.execute("select count(*) from raw._cdc_offsets").fetchone()[0] == 0
+
+
+# --- Event schemas and source type changes ------------------------------------
+
+DEBEZIUM_TYPES = {
+    "marketing_opt_in": {"type": "boolean"},
+    "created_at": {"type": "int64", "name": "io.debezium.time.MicroTimestamp"},
+    "updated_at": {"type": "int64", "name": "io.debezium.time.MicroTimestamp"},
+}
+
+
+def with_schema(raw: str, overrides: dict | None = None) -> str:
+    """Wrap an envelope the way Debezium does with value.schemas.enable=true."""
+    payload = json.loads(raw)
+    image = payload["after"] or payload["before"]
+    types = DEBEZIUM_TYPES | (overrides or {})
+    fields = [{"field": c, **types.get(c, {"type": "string"})} for c in image]
+    schema = {
+        "type": "struct",
+        "fields": [
+            {"type": "struct", "field": "before", "fields": fields},
+            {"type": "struct", "field": "after", "fields": fields},
+        ],
+    }
+    return json.dumps({"schema": schema, "payload": payload})
+
+
+def test_source_kinds_from_debezium_field_schemas() -> None:
+    assert source_kind(
+        {"type": "int64", "name": "io.debezium.time.MicroTimestamp"}
+    ) == ("timestamp")
+    assert source_kind(
+        {"type": "string", "name": "io.debezium.time.ZonedTimestamp"}
+    ) == ("timestamptz")
+    assert source_kind({"type": "int32", "name": "io.debezium.time.Date"}) == "date"
+    assert source_kind({"type": "int32"}) == "integer"
+    assert source_kind({"type": "string"}) == "string"
+    assert source_kind({"type": "bytes", "name": "x.Custom"}) == "bytes:x.Custom"
+
+
+def test_an_event_with_a_schema_maps_like_one_without() -> None:
+    plain = map_event("customers", 0, envelope("c", after=customer()))
+    typed = map_event("customers", 0, with_schema(envelope("c", after=customer())))
+    assert typed.row == plain.row
+    assert typed.kinds["created_at"] == "timestamp"
+
+
+def test_a_new_column_is_decoded_by_its_own_type() -> None:
+    event = map_event(
+        "customers",
+        0,
+        with_schema(
+            envelope("u", after=customer(last_login_at=TS_2024)),
+            {
+                "last_login_at": {
+                    "type": "int64",
+                    "name": "io.debezium.time.MicroTimestamp",
+                }
+            },
+        ),
+    )
+    assert event.row["last_login_at"] == "2024-01-01 00:00:00"  # not microseconds
+
+
+def test_a_type_change_on_a_known_column_is_refused() -> None:
+    changed = with_schema(
+        envelope("u", after=customer(created_at="2024-01-01T05:00:00.000000Z")),
+        {"created_at": {"type": "string", "name": "io.debezium.time.ZonedTimestamp"}},
+    )
+    with pytest.raises(SourceTypeChanged) as err:
+        map_event("customers", 42, changed)
+    [change] = err.value.changes
+    assert (change.column, change.expected, change.observed, change.offset) == (
+        "created_at",
+        "timestamp",
+        "timestamptz",
+        42,
+    )
+
+
+def test_a_reviewed_type_change_loads_in_utc(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(
+        cdc_schema.ALLOWED_SOURCE_KINDS, "customers", {"created_at": {"timestamptz"}}
+    )
+    changed = with_schema(
+        envelope("u", after=customer(created_at="2024-01-01T05:00:00-05:00")),
+        {"created_at": {"type": "string", "name": "io.debezium.time.ZonedTimestamp"}},
+    )
+    assert map_event("customers", 0, changed).row["created_at"] == "2024-01-01 10:00:00"
+
+
+def test_a_blocked_table_keeps_its_offsets_and_the_others_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_read(bootstrap, table, offsets, max_events):
+        if table == "customers":
+            map_event(
+                "customers",
+                5,
+                with_schema(
+                    envelope("u", after=customer(marketing_opt_in="yes")),
+                    {"marketing_opt_in": {"type": "string"}},
+                ),
+            )
+        if table == "products":
+            return [], {}
+        return events(0), {0: (0, 0)}
+
+    monkeypatch.setattr(cdc_consumer, "read_new_events", fake_read)
+    db = tmp_path / "w.duckdb"
+    with pytest.raises(TablesBlocked) as err:
+        cdc_consumer.run_once("unused:9092", db)
+    assert [c.table for c in err.value.changes] == ["customers"]
+    assert {r.table for r in err.value.results} == set(cdc_consumer.TABLES)
+    with duckdb.connect(str(db)) as con:
+        logged = con.execute(
+            "select table_name, column_name, expected, observed, first_offset "
+            "from raw._cdc_type_changes"
+        ).fetchall()
+        assert logged == [("customers", "marketing_opt_in", "boolean", "string", 5)]
+        topics = {
+            r[0] for r in con.execute("select topic from raw._cdc_offsets").fetchall()
+        }
+        assert "ecom.public.customers" not in topics  # nothing consumed, nothing lost
+        assert "ecom.public.orders" in topics  # the other tables still advanced

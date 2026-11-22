@@ -10,6 +10,7 @@ its runbook, and the Dagster alert message includes it.
 | `warehouse_caught_up` breached           | [warehouse-caught-up.md](warehouse-caught-up.md) |
 | `dbt_tests` breached, or dbt build fails | [dbt-tests.md](dbt-tests.md)                     |
 | Any other failed `daily_pipeline` run    | [pipeline-failure.md](pipeline-failure.md)       |
+| CDC load blocked by a source type change | [cdc-type-change.md](cdc-type-change.md)         |
 
 Check every objective at any time:
 

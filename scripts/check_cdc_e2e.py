@@ -13,6 +13,14 @@ Needs the CDC stack running and empty (`make cdc-up` on fresh volumes).
 4. Schema change: add a column in Postgres, change one row, consume. The
    column must land in raw with its value, be logged in
    raw._cdc_schema_changes, and dbt build must still pass.
+5. Typed new column: add a timestamp column; its value must land as
+   timestamp text (decoded from the event's schema), not microseconds.
+6. Type change: change orders.order_placed_at from timestamp to timestamptz
+   and touch one order. The orders load must be blocked (no rows, offsets
+   unchanged, recorded in raw._cdc_type_changes) while the other tables still
+   load. After the change is allowed in cdc_schema.ALLOWED_SOURCE_KINDS, the
+   held event loads with the same timestamp text as before, and dbt build
+   still passes.
 
 Usage:
     python scripts/check_cdc_e2e.py [--work-dir DIR] [--json FILE]
@@ -113,6 +121,118 @@ def schema_change(dsn: str, bootstrap: str, database: Path) -> dict:
     return {"customer_id": customer_id, "logged": logged}
 
 
+def raw_value(database: Path, sql: str, params: list):
+    with duckdb.connect(str(database), read_only=True) as con:
+        rows = con.execute(sql, params).fetchall()
+    return rows[0][0] if rows else None
+
+
+def typed_new_column(dsn: str, bootstrap: str, database: Path) -> dict:
+    import psycopg
+
+    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(
+            "alter table orders add column if not exists gift_wrapped_at timestamp"
+        )
+        cur.execute(
+            "update orders set gift_wrapped_at = '2024-01-02 10:00:00' "
+            "where order_id = (select min(order_id) from orders) returning order_id"
+        )
+        [order_id] = cur.fetchone()
+    query = (
+        "select gift_wrapped_at from raw.orders where order_id = ? "
+        "and gift_wrapped_at is not null"
+    )
+
+    def landed() -> bool:
+        cdc_consumer.run_once(bootstrap, database)
+        try:
+            return raw_value(database, query, [order_id]) is not None
+        except duckdb.BinderException:  # column not added yet
+            return False
+
+    wait_for(landed, 120, "gift_wrapped_at in raw.orders")
+    value = raw_value(database, query, [order_id])
+    kind = raw_value(
+        database,
+        "select source_kind from raw._cdc_schema_changes where column_name = ?",
+        ["gift_wrapped_at"],
+    )
+    if value != "2024-01-02 10:00:00" or kind != "timestamp":
+        raise AssertionError(f"new timestamp column landed as {value!r} ({kind})")
+    return {"order_id": order_id, "value": value, "source_kind": kind}
+
+
+def type_change(dsn: str, bootstrap: str, database: Path) -> dict:
+    import cdc_schema
+    import psycopg
+
+    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("alter table orders alter column order_placed_at type timestamptz")
+        cur.execute(
+            "update orders set updated_at = updated_at "
+            "where order_id = (select max(order_id) from orders) returning order_id"
+        )
+        [order_id] = cur.fetchone()
+    count_sql = "select count(*) from raw.orders where order_id = ?"
+    before_rows = raw_value(database, count_sql, [order_id])
+    placed_sql = (
+        "select order_placed_at from raw.orders where order_id = ? "
+        "order by _loaded_at desc, _ingested_at desc limit 1"
+    )
+    placed_before = raw_value(database, placed_sql, [order_id])
+    offsets_sql = "select next_offset from raw._cdc_offsets where topic = ?"
+    offset_before = raw_value(database, offsets_sql, ["ecom.public.orders"])
+
+    blocked: list = []
+
+    def is_blocked() -> bool:
+        try:
+            cdc_consumer.run_once(bootstrap, database)
+        except cdc_consumer.TablesBlocked as err:
+            blocked[:] = err.changes
+            return True
+        return False
+
+    wait_for(is_blocked, 120, "the orders load to be blocked")
+    if {(c.table, c.column, c.observed) for c in blocked} != {
+        ("orders", "order_placed_at", "timestamptz")
+    }:
+        raise AssertionError(f"unexpected type changes: {blocked}")
+    if raw_value(database, count_sql, [order_id]) != before_rows:
+        raise AssertionError("a blocked table loaded rows")
+    if raw_value(database, offsets_sql, ["ecom.public.orders"]) != offset_before:
+        raise AssertionError("a blocked table advanced its offsets")
+    recorded = raw_value(
+        database,
+        "select observed from raw._cdc_type_changes where column_name = ?",
+        ["order_placed_at"],
+    )
+
+    # The reviewed fix: accept timestamptz for this column, then rerun
+    cdc_schema.ALLOWED_SOURCE_KINDS["orders"]["order_placed_at"] = {"timestamptz"}
+    try:
+        results = cdc_consumer.run_once(bootstrap, database)
+    finally:
+        cdc_schema.ALLOWED_SOURCE_KINDS["orders"].pop("order_placed_at", None)
+    loaded = {r.table: r.rows for r in results}
+    placed_after = raw_value(database, placed_sql, [order_id])
+    if loaded.get("orders", 0) < 1 or placed_after != placed_before:
+        raise AssertionError(
+            f"after the fix: loaded {loaded}, order_placed_at "
+            f"{placed_before!r} -> {placed_after!r}"
+        )
+    return {
+        "order_id": order_id,
+        "blocked": [
+            f"{c.table}.{c.column}: {c.expected} -> {c.observed}" for c in blocked
+        ],
+        "recorded": recorded,
+        "rows_loaded_after_fix": loaded["orders"],
+        "order_placed_at": placed_after,
+    }
+
+
 def run(work_dir: Path, dsn: str, bootstrap: str) -> dict:
     import generate_raw_data
     import psycopg
@@ -158,6 +278,8 @@ def run(work_dir: Path, dsn: str, bootstrap: str) -> dict:
         raise AssertionError("Gold differs: " + "; ".join(report["gold_differences"]))
 
     report["schema_change"] = schema_change(dsn, bootstrap, cdc_db)
+    report["typed_new_column"] = typed_new_column(dsn, bootstrap, cdc_db)
+    report["type_change"] = type_change(dsn, bootstrap, cdc_db)
     report["build_after_schema_change_seconds"] = dbt_build(cdc_db)
     return report
 
@@ -180,7 +302,8 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"OK: {len(report['gold_tables'])} Gold tables identical on both paths; "
         f"{sum(report['raw_rows'].values())} changes loaded exactly once in "
-        f"{report['consumer_runs']} capped runs; new source column handled",
+        f"{report['consumer_runs']} capped runs; new columns handled; "
+        "a source type change was blocked, then loaded once allowed",
         file=sys.stderr,
     )
     return 0

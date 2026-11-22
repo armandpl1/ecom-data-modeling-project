@@ -29,8 +29,16 @@ events. It is added to raw.<table> as varchar (raw is all text) in the same
 transaction as the batch and recorded in raw._cdc_schema_changes, so nothing
 is dropped. Staging selects its columns by name, so dbt keeps working; the new
 column reaches Silver once a staging model selects it. A dropped column just
-arrives as null. A new column's values keep Debezium's encoding (a timestamp
-as microseconds) until it is given a kind in cdc_schema.KINDS.
+arrives as null.
+
+Types: every event carries its schema (value.schemas.enable=true), and values
+are decoded by the type in that schema, so a new timestamp column lands as
+timestamp text, not microseconds. When a known column's type changes at the
+source (say `timestamp` to `timestamptz`), that table stops loading: its
+offsets don't move, nothing is lost, the change is recorded in
+raw._cdc_type_changes, the other tables still load, and the run exits 3.
+Once the change is reviewed and added to cdc_schema.ALLOWED_SOURCE_KINDS,
+the next run loads everything (docs/runbooks/cdc-type-change.md).
 
 Usage:
     python scripts/cdc_consumer.py                       # one catch-up run
@@ -47,11 +55,20 @@ import logging
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import duckdb
-from cdc_schema import DATA_COLUMNS, KEYS, METADATA, TABLES, kind, topic
+from cdc_schema import (
+    DATA_COLUMNS,
+    KEYS,
+    METADATA,
+    TABLES,
+    accepted_kinds,
+    kind,
+    source_kind,
+    topic,
+)
 from load_raw import ensure_load_log
 from raw_data.config import COLUMNS, TS_FMT
 
@@ -69,6 +86,39 @@ class Event:
     offset: int
     row: dict | None  # raw-layer columns as text; None for a tombstone
     tx_id: int | None
+    kinds: dict | None = None  # column -> source kind, from the event's schema
+
+
+@dataclass(frozen=True)
+class TypeChange:
+    table: str
+    column: str
+    expected: str  # the kinds that load without review
+    observed: str
+    offset: int
+
+
+class SourceTypeChanged(Exception):
+    """A known column arrived with a different type than cdc_schema expects."""
+
+    def __init__(self, changes: list[TypeChange]) -> None:
+        self.changes = changes
+        super().__init__(
+            "; ".join(
+                f"{c.table}.{c.column}: expected {c.expected}, got {c.observed} "
+                f"(offset {c.offset})"
+                for c in changes
+            )
+        )
+
+
+class TablesBlocked(Exception):
+    """Some tables were not loaded because of source type changes."""
+
+    def __init__(self, results: list, changes: list[TypeChange]) -> None:
+        self.results, self.changes = results, changes
+        tables = sorted({c.table for c in changes})
+        super().__init__(f"blocked by source type changes: {', '.join(tables)}")
 
 
 @dataclass(frozen=True)
@@ -79,10 +129,16 @@ class BatchResult:
     rows: int
 
 
-def format_value(table: str, column: str, value):
-    """Debezium JSON value -> the CSV text the generator writes."""
+def format_value(table: str, column: str, value, observed: str | None = None):
+    """Debezium JSON value -> the CSV text the generator writes.
+
+    `observed` is the source kind from the event's schema; without one (an
+    event written without schemas), the column's kind in cdc_schema is used.
+    """
     if value is None:
         return None
+    if observed is not None:
+        return format_observed(value, observed)
     k = kind(table, column)
     if k == "timestamp":  # io.debezium.time.MicroTimestamp
         return (EPOCH + timedelta(microseconds=int(value))).strftime(TS_FMT)
@@ -95,19 +151,79 @@ def format_value(table: str, column: str, value):
     return str(value)  # numeric arrives as text (decimal.handling.mode=string)
 
 
+def format_observed(value, observed: str):
+    """Decode a value by its source kind into the CSV text format."""
+    if observed == "timestamp":  # microseconds since the epoch
+        return (EPOCH + timedelta(microseconds=int(value))).strftime(TS_FMT)
+    if observed == "timestamp_ms":
+        return (EPOCH + timedelta(milliseconds=int(value))).strftime(TS_FMT)
+    if observed == "timestamp_ns":
+        return (EPOCH + timedelta(microseconds=int(value) // 1000)).strftime(TS_FMT)
+    if observed == "timestamptz":  # ISO 8601 in UTC, e.g. 2024-01-15T05:12:27Z
+        moment = datetime.fromisoformat(str(value))
+        return moment.astimezone(UTC).replace(tzinfo=None).strftime(TS_FMT)
+    if observed == "date":  # days since the epoch
+        return (date(1970, 1, 1) + timedelta(days=int(value))).isoformat()
+    if observed == "boolean":
+        return "true" if value else "false"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True)
+    return str(value)
+
+
+def schema_kinds(schema: dict) -> dict[str, str]:
+    """column -> source kind, from a Debezium envelope schema."""
+    for part in schema.get("fields", []):
+        if part.get("field") in ("after", "before") and part.get("fields"):
+            return {f["field"]: source_kind(f) for f in part["fields"]}
+    return {}
+
+
+def type_changes(table: str, offset: int, kinds: dict[str, str]) -> list[TypeChange]:
+    changes = []
+    for column in DATA_COLUMNS[table]:
+        observed = kinds.get(column)
+        if observed is None:  # dropped at the source: arrives as null
+            continue
+        accepted = accepted_kinds(table, column)
+        if observed not in accepted:
+            expected = " or ".join(sorted(accepted))
+            changes.append(TypeChange(table, column, expected, observed, offset))
+    return changes
+
+
 def map_event(table: str, offset: int, value: bytes | str | None) -> Event:
-    """One Kafka message -> an Event with a raw-layer row (or a tombstone)."""
+    """One Kafka message -> an Event with a raw-layer row (or a tombstone).
+
+    Raises SourceTypeChanged if a known column's type changed at the source.
+    """
     if value is None:
         return Event(offset, None, None)
-    envelope = json.loads(value)
+    message = json.loads(value)
+    kinds: dict[str, str] | None = None
+    if "schema" in message and "payload" in message:
+        kinds = schema_kinds(message["schema"])
+        if changes := type_changes(table, offset, kinds):
+            raise SourceTypeChanged(changes)
+        envelope = message["payload"]
+    else:
+        envelope = message
     op = OPS[envelope["op"]]
     image = envelope["before"] if op == "D" else envelope["after"]
     source = envelope.get("source") or {}
     commit_us = source.get("ts_us") or source.get("ts_ms", 0) * 1000
-    row = {c: format_value(table, c, image.get(c)) for c in DATA_COLUMNS[table]}
-    # Columns added at the source after this code was written: keep them too
+
+    def observed(column: str) -> str | None:
+        return kinds.get(column) if kinds else None
+
+    row = {
+        c: format_value(table, c, image.get(c), observed(c))
+        for c in DATA_COLUMNS[table]
+    }
+    # Columns added at the source after this code was written: keep them too,
+    # decoded by their own type when the event has a schema
     row |= {
-        c: format_value(table, c, v)
+        c: format_value(table, c, v, observed(c) or "string")
         for c, v in image.items()
         if c not in row and c not in METADATA
     }
@@ -115,7 +231,7 @@ def map_event(table: str, offset: int, value: bytes | str | None) -> Event:
     row["_loaded_at"] = (EPOCH + timedelta(microseconds=commit_us)).strftime(
         LOADED_AT_FMT
     )
-    return Event(offset, row, source.get("txId"))
+    return Event(offset, row, source.get("txId"), kinds)
 
 
 def drop_delete_touches(table: str, events: list[Event]) -> list[Event]:
@@ -167,6 +283,21 @@ def ensure_tables(con: duckdb.DuckDBPyConnection, table: str) -> None:
             primary key (table_name, column_name)
         )
         """)
+    con.execute(
+        "alter table raw._cdc_schema_changes "
+        "add column if not exists source_kind varchar"
+    )
+    con.execute("""
+        create table if not exists raw._cdc_type_changes (
+            table_name  varchar   not null,
+            column_name varchar   not null,
+            expected    varchar   not null,
+            observed    varchar   not null,
+            first_offset bigint   not null,
+            detected_at timestamp not null,
+            primary key (table_name, column_name, observed)
+        )
+        """)
     columns = ", ".join(f"{c} varchar" for c in COLUMNS[table])
     con.execute(
         f"create table if not exists raw.{table} ({columns}, _ingested_at timestamp, "
@@ -187,7 +318,11 @@ def raw_columns(con: duckdb.DuckDBPyConnection, table: str) -> list[str]:
 
 
 def add_new_columns(
-    con: duckdb.DuckDBPyConnection, table: str, rows: list[dict], batch_id: str
+    con: duckdb.DuckDBPyConnection,
+    table: str,
+    rows: list[dict],
+    batch_id: str,
+    kinds: dict[str, str] | None = None,
 ) -> list[str]:
     """Add columns the source gained since the raw table was created."""
     existing = raw_columns(con, table)
@@ -198,8 +333,9 @@ def add_new_columns(
         con.execute(f'alter table raw.{table} add column "{column}" varchar')
         con.execute(
             "insert or ignore into raw._cdc_schema_changes "
-            "values (?, ?, ?, current_timestamp::timestamp)",
-            [table, column, batch_id],
+            "(table_name, column_name, batch_id, detected_at, source_kind) "
+            "values (?, ?, ?, current_timestamp::timestamp, ?)",
+            [table, column, batch_id, (kinds or {}).get(column)],
         )
         log.warning(
             "raw.%s: new source column %s added (varchar); "
@@ -238,7 +374,10 @@ def write_batch(
     con.execute("begin transaction")
     try:
         if rows:
-            columns = add_new_columns(con, table, rows, batch_id)
+            kinds: dict[str, str] = {}
+            for e in events:
+                kinds |= e.kinds or {}
+            columns = add_new_columns(con, table, rows, batch_id, kinds)
             with tempfile.NamedTemporaryFile("w", suffix=".csv", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=columns)
                 writer.writeheader()
@@ -326,18 +465,48 @@ def run_once(
     max_events: int | None = None,
     fail_before_commit: bool = False,
 ) -> list[BatchResult]:
-    results = []
+    """Load every table once. A table whose source type changed is skipped
+    (and recorded); the others still load, then TablesBlocked is raised."""
+    results, blocked = [], []
     with duckdb.connect(str(database)) as con:
         for table in TABLES:
             ensure_tables(con, table)
-            events, ranges = read_new_events(
-                bootstrap, table, stored_offsets(con, topic(table)), max_events
-            )
+            try:
+                events, ranges = read_new_events(
+                    bootstrap, table, stored_offsets(con, topic(table)), max_events
+                )
+            except SourceTypeChanged as err:
+                record_type_changes(con, err.changes)
+                blocked += err.changes
+                results.append(BatchResult(table, None, 0, 0))
+                continue
             if not ranges:
                 results.append(BatchResult(table, None, 0, 0))
                 continue
             results.append(write_batch(con, table, events, ranges, fail_before_commit))
+    if blocked:
+        raise TablesBlocked(results, blocked)
     return results
+
+
+def record_type_changes(
+    con: duckdb.DuckDBPyConnection, changes: list[TypeChange]
+) -> None:
+    for c in changes:
+        con.execute(
+            "insert or ignore into raw._cdc_type_changes "
+            "values (?, ?, ?, ?, ?, current_timestamp::timestamp)",
+            [c.table, c.column, c.expected, c.observed, c.offset],
+        )
+        log.error(
+            "raw.%s not loaded: source column %s changed type (expected %s, got %s,"
+            " offset %s). See docs/runbooks/cdc-type-change.md",
+            c.table,
+            c.column,
+            c.expected,
+            c.observed,
+            c.offset,
+        )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -356,7 +525,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     began = time.monotonic()
     while True:
-        results = run_once(args.bootstrap, args.database, args.max_events)
+        try:
+            results = run_once(args.bootstrap, args.database, args.max_events)
+        except TablesBlocked as err:
+            print(
+                "; ".join(
+                    f"{r.table}: {r.rows} rows from {r.events} events"
+                    for r in err.results
+                )
+            )
+            for c in err.changes:
+                print(
+                    f"BLOCKED {c.table}.{c.column}: expected {c.expected}, "
+                    f"got {c.observed} (see docs/runbooks/cdc-type-change.md)"
+                )
+            return 3
         loaded = [r for r in results if r.rows]
         if loaded or not args.follow:
             print(

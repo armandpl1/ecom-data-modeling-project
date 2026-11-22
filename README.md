@@ -341,10 +341,16 @@ Notes:
 - **Whole-path check:** `make cdc-e2e` (`scripts/check_cdc_e2e.py`) starts a
   fresh stack, builds the CSV path and the CDC path into separate
   warehouses, and fails unless every Gold table is identical, every change
-  lands exactly once (a rerun loads nothing), and a column added in Postgres
-  reaches raw with dbt still passing. Last run: 6 of 6 Gold tables identical;
-  21,234 changes in 4 capped runs (5,000 events per table each) in 11.1 s;
-  `loyalty_tier` added to `raw.customers`; 3 min 54 s in total.
+  lands exactly once (a rerun loads nothing), a column added in Postgres
+  reaches raw with dbt still passing, a new timestamp column lands as
+  timestamp text, and a type change blocks its table until it is allowed.
+  Last run (with event schemas on): 6 of 6 Gold tables identical; 21,234
+  changes in 4 capped runs (5,000 events per table each) in 15.5 s;
+  `loyalty_tier` added to `raw.customers`; `gift_wrapped_at` landed as
+  `2024-01-02 10:00:00`; changing `orders.order_placed_at` to `timestamptz`
+  blocked `orders` with its offsets unchanged, and once allowed the held
+  event loaded with the same text (`2026-10-31 20:15:01`); 3 min 47 s in
+  total.
 - **In CI, but separately:** the stack needs about 2.5 GB of images
   (Debezium Server alone is 1.53 GB), so `.github/workflows/cdc-e2e.yml` runs
   `check_cdc_e2e.py` only on pull requests that touch CDC or staging code,
@@ -359,9 +365,21 @@ Notes:
   the update just before it are never split.
 - **Schema changes:** a column added at the source arrives as an extra field.
   The consumer adds it to `raw.<table>` (as text, like every raw column) in
-  the same transaction as the batch and logs it in `raw._cdc_schema_changes`.
-  Staging selects columns by name, so dbt keeps working; select the new
-  column in the staging model to use it. A dropped column arrives as null.
+  the same transaction as the batch and logs it, with its source type, in
+  `raw._cdc_schema_changes`. Staging selects columns by name, so dbt keeps
+  working; select the new column in the staging model to use it. A dropped
+  column arrives as null.
+- **Type changes:** every event carries its Debezium schema, and values are
+  decoded by the type in that schema (so a new timestamp column lands as
+  timestamp text, not microseconds). When a known column changes type at the
+  source, for example `timestamp` to `timestamptz`, that table stops
+  loading: its offsets don't move, the change is recorded in
+  `raw._cdc_type_changes`, the other tables still load, and the run exits 3
+  (in Dagster, the run fails and alerts). After review, the new type is
+  allowed in `scripts/cdc_schema.py` and the held events load exactly once
+  ([runbook](docs/runbooks/cdc-type-change.md)). Numeric and text can't be
+  told apart (Debezium sends numeric as text here), so a change between them
+  isn't flagged; both land as the same text.
 - **Lag:** measure it with `scripts/cdc_lag.py` while the consumer runs with
   `--follow` (see the script's docstring). About 1 s of the lag is the poll
   interval.

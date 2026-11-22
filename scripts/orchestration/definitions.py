@@ -174,7 +174,23 @@ class CdcSettings(dg.ConfigurableResource):
     ),
 )
 def cdc_changes(paths: WarehousePaths, cdc: CdcSettings) -> dg.MaterializeResult:
-    results = cdc_consumer.run_once(cdc.bootstrap, Path(paths.database), cdc.max_events)
+    try:
+        results = cdc_consumer.run_once(
+            cdc.bootstrap, Path(paths.database), cdc.max_events
+        )
+    except cdc_consumer.TablesBlocked as err:
+        # The other tables were loaded; fail so alert_on_failure posts the change
+        raise dg.Failure(
+            description=(
+                "CDC load blocked by a source type change: "
+                + "; ".join(
+                    f"{c.table}.{c.column} expected {c.expected}, got {c.observed}"
+                    for c in err.changes
+                )
+                + ". Runbook: docs/runbooks/cdc-type-change.md"
+            ),
+            metadata={f"rows_{r.table}": r.rows for r in err.results},
+        ) from err
     return dg.MaterializeResult(
         metadata={
             "rows_loaded": sum(r.rows for r in results),
