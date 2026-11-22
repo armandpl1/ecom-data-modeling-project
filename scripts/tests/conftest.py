@@ -30,12 +30,13 @@ def small_dataset():
     h = make_history(seed=3, late_rate=0.05)
     product_rows, products = generate_products(h, 40)
     customer_rows, customers = generate_customers(h, 300)
-    order_rows = generate_orders(h, 1500, customers, products)
+    order_rows, order_line_rows = generate_orders(h, 1500, customers, products)
     subscription_rows = generate_subscriptions(h, 0.4, customers)
     return {
         "history": h,
         "products": (product_rows, products),
         "customers": (customer_rows, customers),
         "orders": order_rows,
+        "order_lines": order_line_rows,
         "subscriptions": subscription_rows,
     }

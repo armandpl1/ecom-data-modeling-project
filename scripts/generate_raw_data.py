@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Generate raw e-commerce source data with change history, for dbt practice.
 
-Writes four CSVs that look like append-only extracts from a source system
+Writes five CSVs that look like append-only extracts from a source system
 (CDC-style): every change to a record is a new row, never an in-place edit.
 
     customers.csv      one row per customer version
     products.csv       one row per product version
-    orders.csv         one row per order status change
+    orders.csv         one row per order header change (status, total)
+    order_lines.csv    one row per order line version (1-5 products per order)
     subscriptions.csv  one row per subscription version
 
 Metadata columns on every file:
@@ -18,8 +19,9 @@ What the history contains:
     Updates       customers move, change email/phone/name/segment, opt out;
                   product prices change and products get discontinued;
                   orders move placed -> shipped -> delivered (or cancelled,
-                  returned); subscriptions trial, upgrade, pause, churn, and
-                  get repriced.
+                  returned), and single lines can be returned;
+                  subscriptions trial, upgrade, pause, churn, and get
+                  repriced.
     Corrections   a bad value is written, then fixed a few hours later
                   (price typos, name typos, messy emails, wrong quantities).
                   Some fixes keep the same updated_at as the bad row and only
@@ -91,13 +93,16 @@ def generate(args: argparse.Namespace) -> dict[str, list[dict]]:
     h = History(args.seed, args.start, args.end, args.late_rate, args.dup_rate)
     product_rows, products = generate_products(h, args.products)
     customer_rows, customers = generate_customers(h, args.customers)
+    order_rows, line_rows = generate_orders(h, args.orders, customers, products)
     tables = {
         "products": product_rows,
         "customers": customer_rows,
-        "orders": generate_orders(h, args.orders, customers, products),
+        "orders": order_rows,
         "subscriptions": generate_subscriptions(h, args.subscription_share, customers),
     }
-    return {name: h.add_duplicates(rows) for name, rows in tables.items()}
+    out = {name: h.add_duplicates(rows) for name, rows in tables.items()}
+    # Order lines already have their duplicates, from their own random source
+    return {**out, "order_lines": line_rows}
 
 
 def main(argv: list[str] | None = None) -> None:

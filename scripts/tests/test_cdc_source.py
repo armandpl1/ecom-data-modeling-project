@@ -46,11 +46,11 @@ def test_a_correction_follows_the_value_it_fixes(changes: list[Change]) -> None:
 
 
 def test_statements_cast_typed_columns() -> None:
-    row = {c: "1" for c in DATA_COLUMNS["orders"]}
-    [(sql, params)] = statements(Change("orders", "I", row, None, None))
-    assert sql.startswith("insert into orders (order_id")
+    row = {c: "1" for c in DATA_COLUMNS["order_lines"]}
+    [(sql, params)] = statements(Change("order_lines", "I", row, None, None))
+    assert sql.startswith("insert into order_lines (order_line_id")
     assert "%s::integer" in sql and "%s::numeric" in sql and "%s::timestamp" in sql
-    assert len(params) == len(DATA_COLUMNS["orders"])
+    assert len(params) == len(DATA_COLUMNS["order_lines"])
 
 
 def test_update_sets_every_non_key_column() -> None:

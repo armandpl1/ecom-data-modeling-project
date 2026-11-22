@@ -25,6 +25,12 @@ with landed as (
     select
         _batch_id as batch_id,
         count(*)  as rows_landed
+    from {{ source('raw', 'order_lines') }}
+    group by 1
+    union all
+    select
+        _batch_id as batch_id,
+        count(*)  as rows_landed
     from {{ source('raw', 'subscriptions') }}
     group by 1
 

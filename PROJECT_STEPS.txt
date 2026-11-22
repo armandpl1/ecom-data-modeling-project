@@ -30,7 +30,7 @@ make lint      # ruff, black, flake8 and file hygiene
 
 **Goal:** realistic source extracts with change history, so the models have to handle real-world problems.
 
-1. `scripts/generate_raw_data.py` writes four CSVs to `data/raw/`: customers, products, orders and subscriptions.
+1. `scripts/generate_raw_data.py` writes five CSVs to `data/raw/`: customers, products, orders, order lines (since Step 19) and subscriptions.
 2. Each file is an append-only extract. Every change is a new row with `updated_at`, `_op` (I/U/D) and `_loaded_at`.
 3. The data includes updates, corrections, late-arriving rows, duplicates, hard deletes and messy values.
 4. The output is reproducible: the same `--seed` always gives the same files.
@@ -44,7 +44,7 @@ make data      # defaults: 1000 customers, 6000 orders
 make test      # generator tests
 ```
 
-**Check:** four CSVs in `data/raw/`, and `make test` passes.
+**Check:** five CSVs in `data/raw/`, and `make test` passes.
 
 ---
 
@@ -211,7 +211,7 @@ loading safe to rerun (gap 1 in IMPROVEMENTS.txt).
 6. `scripts/tests/test_load_raw.py`: first load, safe rerun, appended new
    extract, columns matched by name, failed load leaves nothing behind.
 
-**Check:** `make build` twice. The second `load` reports all 4 extracts as
+**Check:** `make build` twice. The second `load` reports all 5 extracts as
 skipped, and `dbt build` passes both times. Gold tables are identical to
 building from the CSVs directly (checked: same rows and content).
 
@@ -370,8 +370,8 @@ nightly files.
     fresh stack, plus a schema change; `.github/workflows/cdc-e2e.yml` runs it
     on CDC pull requests, weekly and by hand.
 
-**Check:** `make cdc-e2e`: 6 of 6 Gold tables identical, 21,234 raw rows for
-21,234 changes, a rerun loads nothing, `loyalty_tier` lands in raw, a new
+**Check:** `make cdc-e2e`: 7 of 7 Gold tables identical, 32,473 raw rows for
+32,473 changes (with order lines, Step 19), a rerun loads nothing, `loyalty_tier` lands in raw, a new
 timestamp column lands as timestamp text, a `timestamp` to `timestamptz`
 change blocks `orders` until allowed, and `dbt build` still passes (3 min
 47 s on this laptop).
@@ -409,9 +409,9 @@ IMPROVEMENTS.txt).
    publish ids; plus a Dagster test that `gold_iceberg` follows dbt.
 
 **Check:** `make build && make iceberg && make iceberg && make check-iceberg`:
-6 created, then 6 unchanged, then 6 of 6 tables identical to Gold, all with
-the same publish id. Publishing takes about 7 s and 2.2 MB; a June 2025 query
-on `fact_orders` plans 1 of 34 data files.
+every table created, then unchanged, then identical to Gold (7 of 7 since
+Step 19), all with the same publish id. Publishing takes about 7 s; a June
+2025 query on `fact_orders` plans 1 of 34 data files.
 
 ---
 
@@ -480,7 +480,8 @@ rebuild the logic (gap 8 in IMPROVEMENTS.txt).
    `_reporting.yml`; `tests/assert_reporting_reconciles_to_facts.sql`.
 
 **Check:** `dbt build -s models/marts/reporting assert_reporting_reconciles_to_facts`:
-76 passed. Lifetime-value revenue equals fact_orders ($1,078,753.71), and
+76 passed. Lifetime-value revenue equals fact_orders ($1,078,753.71 then;
+$1,827,407.58 with order lines, Step 19), and
 current MRR equals the dashboard's ($4,162). Running the reconciliation
 SQL with one customer or one cohort removed reports the mismatch.
 
@@ -508,6 +509,36 @@ request changed (gap 4 in IMPROVEMENTS.txt).
 157 for stg_orders; with no change, "Nothing to do". The compiled
 relationships test of a rebuilt dim_product reads fact_orders from
 ecom_prod.gold.
+
+---
+
+## Step 19: Multi-line orders ✅
+
+**Goal:** orders with several products, and a fact at each grain (gap 13 in
+IMPROVEMENTS.txt).
+
+1. Generator: `orders.csv` is the order header (customer, payment, total,
+   status); new `order_lines.csv` with 1-5 lines per order, line discounts,
+   goodwill discounts on every line, and single-line returns. Extra lines
+   draw from a separate random substream, so customers.csv, products.csv and
+   subscriptions.csv are byte-identical and every order keeps its first line.
+   A line version loads with the header change it belongs to; a test checks
+   that header and lines agree after every nightly load.
+2. Raw layer, SLOs, Dagster: `order_lines` added to the table lists.
+3. Bronze `stg_order_lines`; Silver `int_order_lines` and a line-grain
+   `int_orders_enriched` (the product version is per line).
+4. Gold: `fact_orders` is one row per real line (incremental on whole
+   orders, so one changed line can't drop its siblings); new
+   `fact_order_headers` at the order grain; tests that lines add up to the
+   header total (fails) and that headers have lines (warns, self-healing).
+5. CDC: an `order_lines` table in Postgres and Debezium, replayed after its
+   header.
+6. `check_incremental.py` now splits between nightly batches (at noon).
+
+**Check:** `make ci` (314 nodes, only allowed warnings), `make
+check-incremental` (8 of 8 tables equal to a full refresh), `make
+check-late-dimensions`, `make cdc-e2e` (7 of 7 Gold tables identical,
+32,473 changes exactly once), `make check-iceberg` (7 of 7).
 
 ---
 

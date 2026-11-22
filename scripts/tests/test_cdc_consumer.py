@@ -61,8 +61,8 @@ def test_format_value_matches_the_csv_text() -> None:
     assert format_value("orders", "updated_at", TS_2024) == "2024-01-01 00:00:00"
     assert format_value("subscriptions", "started_at", 19723) == "2024-01-01"
     assert format_value("products", "is_active", False) == "false"
-    assert format_value("orders", "unit_price", "22.99") == "22.99"
-    assert format_value("orders", "quantity", 3) == "3"
+    assert format_value("order_lines", "unit_price", "22.99") == "22.99"
+    assert format_value("order_lines", "quantity", 3) == "3"
     assert format_value("customers", "phone", None) is None
 
 

@@ -5,7 +5,8 @@
 
 with orders as (
 
-    select * from {{ ref('fact_orders') }}
+    -- One row per order (fact_orders is one row per line)
+    select * from {{ ref('fact_order_headers') }}
 
 ),
 

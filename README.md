@@ -34,7 +34,7 @@ make ci             # the whole CI pipeline, locally
 python scripts/generate_raw_data.py
 ```
 
-This writes four CSVs to `data/raw/`. The output is reproducible: the same `--seed` and options always produce the same files, so `data/` is not committed.
+This writes five CSVs to `data/raw/`. The output is reproducible: the same `--seed` and options always produce the same files, so `data/` is not committed.
 
 | Option                 | Default                 | Meaning                                     |
 | ---------------------- | ----------------------- | ------------------------------------------- |
@@ -141,16 +141,14 @@ warehouse and compares every Gold and restricted table (row counts and a
 content hash per column). Measured on the default data, with batch 2 being
 the last 30 days of loads:
 
-| Measure                                            | Result                                                                                 |
-| -------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Raw rows read by the incremental run on batch 2    | 2,070 (129 customers, 4 products, 1,899 orders, 38 subscriptions): exactly batch 2     |
-| Silver entities rebuilt                            | 111 of 1,000 customers, 4 of 80 products, 31 of 326 subscriptions, 792 of 5,998 orders |
-| Gold rows recomputed (look-back 0)                 | 1,353 of 5,998 orders, 37 of 326 subscriptions                                         |
-| Raw rows read by a rerun with no new load          | 0                                                                                      |
-| Gold and restricted tables equal to a full refresh | 7 of 7                                                                                 |
+| Measure                                            | Result                                                                                                |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Raw rows read by the incremental run on batch 2    | 3,252 (129 customers, 4 products, 1,899 orders, 1,182 order lines, 38 subscriptions): exactly batch 2 |
+| Raw rows read by a rerun with no new load          | 0                                                                                                     |
+| Gold and restricted tables equal to a full refresh | 8 of 8                                                                                                |
 
 On data this small, the incremental run is not faster: on a laptop with a
-slow disk it took 74.7 s against 45.6 s for a full refresh of both batches,
+slow disk it took 93.0 s against 57.7 s for a full refresh of both batches,
 because the per-entity bookkeeping costs more than rebuilding 21k rows. The
 work it skips grows with history, so the gain appears at real volumes.
 
@@ -312,17 +310,19 @@ name, and stores each partition's next offset in `raw._cdc_offsets` in the
 **same DuckDB transaction** as the rows: a crash leaves neither, so nothing is
 lost or loaded twice.
 
-**Measured** (default data, this laptop, stack capped at 1.6 GB):
+**Measured** (default data, this laptop, stack capped at 1.6 GB). The
+replay, `dbt build` and Gold rows were re-measured after order lines were
+added (Step 19); the other rows are from before, with four source tables:
 
 | Check                         | Result                                                                                                                 |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Replay into Postgres          | 21,234 changes in 15.8 s (about 1,340 per second)                                                                      |
+| Replay into Postgres          | 32,473 changes in 22.7 s (about 1,430 per second)                                                                      |
 | Consumer catch-up             | 23,266 events -> 21,234 raw rows (one per change) in 4.5 s                                                             |
 | Crash safety                  | killed (`kill -9`) 4 times mid-run, then caught up: 0 rows missing, 0 extra, offsets identical                         |
 | Lag, commit -> raw (1 s poll) | 200 changes at 10/s: p50 1.58 s, p95 2.49 s, max 3.44 s                                                                |
 | Lag at 50 changes/s           | 500 changes: p50 1.37 s, p95 2.54 s, max 3.08 s                                                                        |
-| `dbt build` on CDC data       | PASS=176, WARN=1 (the known `delivered_orders_have_ship_event`), ERROR=0                                               |
-| Gold vs the CSV path          | all 6 Gold tables identical                                                                                            |
+| `dbt build` on CDC data       | passes, with only the allowed warnings (late ship events, order headers ahead of their lines)                          |
+| Gold vs the CSV path          | all 7 Gold tables identical, including both order facts                                                                |
 | End to end                    | an email change became `dim_customer` version 4 with the new hash; a delete ended the customer (`is_deleted_customer`) |
 | Peak container memory         | about 500 MiB in total during the replay (Debezium 313, Redpanda 149, Postgres 36)                                     |
 
@@ -344,13 +344,13 @@ Notes:
   lands exactly once (a rerun loads nothing), a column added in Postgres
   reaches raw with dbt still passing, a new timestamp column lands as
   timestamp text, and a type change blocks its table until it is allowed.
-  Last run (with event schemas on): 6 of 6 Gold tables identical; 21,234
-  changes in 4 capped runs (5,000 events per table each) in 15.5 s;
+  Last run (with order lines): 7 of 7 Gold tables identical; 32,473
+  changes in 4 capped runs (5,000 events per table each) in 14.6 s;
   `loyalty_tier` added to `raw.customers`; `gift_wrapped_at` landed as
   `2024-01-02 10:00:00`; changing `orders.order_placed_at` to `timestamptz`
   blocked `orders` with its offsets unchanged, and once allowed the held
-  event loaded with the same text (`2026-10-31 20:15:01`); 3 min 47 s in
-  total.
+  event loaded with the same text (`2026-10-31 20:15:01`); about 5 minutes
+  in total.
 - **In CI, but separately:** the stack needs about 2.5 GB of images
   (Debezium Server alone is 1.53 GB), so `.github/workflows/cdc-e2e.yml` runs
   `check_cdc_e2e.py` only on pull requests that touch CDC or staging code,
@@ -433,13 +433,13 @@ How it works (`scripts/publish_iceberg.py`, settings in `ops/lakehouse.yml`):
 A breaking change stops every table, not just the broken one, so the
 lakehouse never mixes two versions of the model.
 
-**Measured** on the sample data: 6 tables (14,328 rows, including the two
-unknown-member rows) published in about 5
-seconds into 2.2 MB; a rerun changed 0 tables; `check-iceberg` found 6 of 6
-tables identical to Gold row for row (EXCEPT ALL both ways, so duplicates
-count), read by a different reader from the one that wrote them; a June 2025
-query on `fact_orders` planned 1 of 34 files and returned the same 146 rows
-as Gold.
+**Measured** on the sample data (with order lines): 7 tables (24,901 rows)
+published in about 7 seconds; a rerun changed 0 tables; `check-iceberg`
+found 7 of 7 tables identical to Gold row for row (EXCEPT ALL both ways, so
+duplicates count), read by a different reader from the one that wrote them;
+a June 2025 query on `fact_orders` planned 1 of 34 files and returned the
+same 262 lines (146 orders) as Gold. When `fact_orders` gained the
+`is_line_returned` column, the publish evolved the Iceberg schema on its own.
 
 In the pipeline: the `gold_iceberg` Dagster asset publishes after
 `dbt build` in `daily_pipeline` (a breaking change fails the run and alerts),
@@ -467,17 +467,21 @@ Every file has three metadata columns:
 | ------------------- | ----------------- | -------------------- | --------------------------------------------------------------- |
 | `customers.csv`     | `customer_id`     | customer version     | name, email, phone, address, segment, marketing opt-in          |
 | `products.csv`      | `product_id`      | product version      | SKU, name, category, unit price, active flag                    |
-| `orders.csv`        | `order_id`        | order status change  | customer, product, quantity, price, discount, total, status     |
+| `orders.csv`        | `order_id`        | order header change  | customer, payment method, total, status                         |
+| `order_lines.csv`   | `order_line_id`   | order line version   | order, line number, product, quantity, price, discount, total   |
 | `subscriptions.csv` | `subscription_id` | subscription version | customer, plan, billing period, MRR, status, start/cancel dates |
 
-Orders contain one product each. Orders and subscriptions reference customers and products by ID.
+An order has 1 to 5 lines, each a different product; the order total is the
+sum of the line totals. A line version loads in the same batch as the header
+change it belongs to, except when a single line is returned. Orders and
+subscriptions reference customers and products by ID.
 
 ### What's in the history
 
 - **Updates:**
   - Customers move, change email, phone or last name, toggle marketing opt-in, and move up a segment.
   - Product prices change, and some products are discontinued.
-  - Orders go `placed` → `shipped` → `delivered`, or are `cancelled`. Some are later `returned` or get a goodwill discount.
+  - Orders go `placed` → `shipped` → `delivered`, or are `cancelled`. Some are later `returned` or get a goodwill discount on every line. A line of a multi-line order can be returned on its own.
   - Subscriptions go `trialing` → `active`, upgrade or downgrade, become `past_due` or `paused`, and churn to `cancelled`. All live subscriptions are repriced once when plan prices go up.
 - **Corrections:** a wrong value is written, then fixed. Examples are a product price with a shifted decimal point, typos in names, an uppercase email with spaces, a wrong state, an order with the wrong quantity, and a backdated subscription start date. About 30% of fixes have the **same `updated_at`** as the bad row, so only `_loaded_at` tells you which one is newer.
 - **Late arrivals:** about 3% of rows load 1–14 days after they happened, so rows can arrive out of order.
@@ -725,7 +729,7 @@ Launch and discontinuation dates belong to the product, not the version, so they
 
 ### `fact_orders`
 
-**Grain: one row per order line.** The source sells one product per order, so each order has one line (`order_line_number = 1`, `order_line_id = <order_id>-1`). Keying on the line means multi-product orders would fit without a redesign.
+**Grain: one row per order line.** An order has 1 to 5 lines (`order_line_number` from 1, `order_line_id = <order_id>-<order_line_number>`), each with its own product version, quantity, price and discount. Order attributes (status, payment, timestamps) repeat on every line. A line returned on its own has `is_line_returned` and counts as returned revenue; the rest of the order still counts.
 
 | Kind                 | Columns                                                                                                                        |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -736,6 +740,8 @@ Launch and discontinuation dates belong to the product, not the version, so they
 | Attributes and flags | `order_status`, `payment_method`, `currency`, `is_open`, `is_cancelled`, `is_returned`, lifecycle timestamps                   |
 
 The revenue measures add up: `gross_revenue − discount_amount = net_revenue` and `net_revenue − cancelled_revenue − returned_revenue = recognized_revenue`.
+
+`fact_order_headers` is the same data at the **order grain**: one row per order, with `line_count`, `units` and the line measures summed, next to the header's own `order_total`. Two tests guard the link: `assert_order_lines_reconcile_to_header` fails if an order's lines don't add up to its total (to the cent), and `assert_order_headers_have_lines` warns about orders whose lines haven't loaded yet (a header change can load before the insert that carries the lines).
 
 `dim_date` is a **role-playing dimension** here: the same table is joined three times, as order date, ship date and delivery date. Ship and delivery keys are null until those events happen.
 
@@ -790,10 +796,11 @@ Now each dimension has one **unknown member** (Kimball's standard design):
 
 `make check-late-dimensions` (`scripts/check_late_dimensions.py`, also in CI)
 proves it. It loads everything except one customer and builds: the
-customer's 86 orders, 2 subscription events and 20 MRR months point to the
-unknown member, and the three `unknown_member_rows` tests warn. Then it
+customer's 86 orders (143 order lines), 2 subscription events and 20 MRR
+months point to the unknown member, and the four `unknown_member_rows` tests
+warn. Then it
 loads the customer and runs a normal incremental build: 0 rows left on the
-unknown member, and all 7 Gold and restricted tables equal a full rebuild
+unknown member, and all 8 Gold and restricted tables equal a full rebuild
 from the same loads. On the normal sample data no fact points to the
 unknown member. Only a late customer is exercised; a late product takes the
 same path.
@@ -814,7 +821,7 @@ An order is a non-cancelled `order_id`, and revenue is recognized revenue
 | `repeat_purchase`               | One row per first-order month             | Repeat rate and days between orders                                  |
 
 Measured on the sample data: 1,000 customers; 944 have revenue and an RFM
-segment (211 Champions, 214 Hibernating). 25.9% of a cohort orders again in
+segment (212 Champions, 214 Hibernating). 25.9% of a cohort orders again in
 the month after its first order, and 86% of customers order more than once
 (median of the cohorts' median gaps: 28.7 days). After 12 months, 64.8% of
 subscriptions are still paying and keep 87.9% of their starting MRR.
@@ -987,7 +994,7 @@ dbt docs generate     # writes target/manifest.json, catalog.json and index.html
 dbt docs serve        # opens the docs site at http://localhost:8080
 ```
 
-In the docs site, the lineage graph (bottom-right button) shows how the four raw CSV sources flow through Bronze and Silver into the Gold facts and dimensions. Select a model and use `+model+` in the graph filter to see everything upstream and downstream of it.
+In the docs site, the lineage graph (bottom-right button) shows how the five raw CSV sources flow through Bronze and Silver into the Gold facts and dimensions. Select a model and use `+model+` in the graph filter to see everything upstream and downstream of it.
 
 `dbt docs generate --static` writes `target/static_index.html`, a single self-contained file that opens in a browser without a server. CI builds it and attaches it to every run as a downloadable artifact.
 
@@ -1025,7 +1032,8 @@ builds only the changed models and everything downstream, and reads every
 unchanged model from prod. A relationships test on a rebuilt `dim_product`,
 for example, reads `fact_orders` from `ecom_prod.gold`.
 
-Measured locally (`make prod-state`, change one file, `make slim-build`):
+Measured locally (`make prod-state`, change one file, `make slim-build`)
+when the project had 258 nodes (Step 18; 314 since order lines):
 
 | Change                            | Nodes built (of 258) | Time, raw load included |
 | --------------------------------- | -------------------- | ----------------------- |

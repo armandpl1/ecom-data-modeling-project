@@ -42,7 +42,11 @@ from raw_data.writer import fmt
 
 DEFAULT_DSN = "host=localhost port=15432 dbname=source user=ecom password=ecom"
 TABLE_RANK = {
-    t: i for i, t in enumerate(("products", "customers", "subscriptions", "orders"))
+    # An order header change replays before its lines (same updated_at)
+    t: i
+    for i, t in enumerate(
+        ("products", "customers", "subscriptions", "orders", "order_lines")
+    )
 }
 
 log = logging.getLogger("cdc_source")

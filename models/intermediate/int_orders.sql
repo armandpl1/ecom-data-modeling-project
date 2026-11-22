@@ -5,7 +5,8 @@
     on_schema_change='fail'
 ) }}
 
--- Silver: one row per order with its latest state and lifecycle timestamps.
+-- Silver: one row per order header with its latest state and lifecycle
+-- timestamps. The lines (products, quantities, prices) are in int_order_lines.
 --
 -- Incremental: per-order rebuild of orders with Bronze rows ingested after
 -- this table's watermark (_max_ingested_at, newest ingestion of the order).
@@ -57,21 +58,11 @@ lifecycle as (
 select
     latest_state.order_id,
     latest_state.customer_id,
-    latest_state.product_id,
     latest_state.order_status,
     latest_state.payment_method,
     latest_state.currency,
 
-    latest_state.quantity,
-    latest_state.unit_price,
-    latest_state.discount_pct,
-    cast(latest_state.quantity * latest_state.unit_price as decimal(12, 2))
-        as gross_amount,
-    cast(
-        latest_state.quantity * latest_state.unit_price - latest_state.order_total
-        as decimal(12, 2)
-    )                                                  as discount_amount,
-    latest_state.order_total                           as net_amount,
+    latest_state.order_total,
 
     latest_state.order_placed_at,
     lifecycle.shipped_at,

@@ -31,6 +31,7 @@ def make_extract(root: Path) -> Path:
         ["O6", "C3"],
     ]
     write(root / "orders.csv", ["order_id", "customer_id"], orders)
+    write(root / "order_lines.csv", ["order_line_id", "order_id"], [["O1-1", "O1"]])
     write(
         root / "subscriptions.csv",
         ["subscription_id", "customer_id"],

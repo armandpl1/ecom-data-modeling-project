@@ -35,6 +35,7 @@ from load_raw import TABLES, load_all
 UNKNOWN = "-1"
 FACTS = {
     "fact_orders": ("customer_sk", "product_sk"),
+    "fact_order_headers": ("customer_sk",),
     "fact_subscriptions": ("customer_sk",),
     "fact_subscription_mrr_monthly": ("customer_sk",),
 }

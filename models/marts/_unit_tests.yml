@@ -47,9 +47,9 @@ unit_tests:
 
   - name: int_orders_rolls_up_lifecycle_and_corrections
     description: >
-      An order is placed with the wrong quantity, corrected, shipped,
-      delivered and returned. The roll-up must keep the corrected quantity,
-      take the latest status, and record when each status was first reached.
+      An order is placed with the wrong total, corrected, shipped, delivered
+      and returned. The roll-up must keep the corrected total, take the
+      latest status, and record when each status was first reached.
     model: int_orders
     overrides:
       macros:
@@ -59,19 +59,16 @@ unit_tests:
     given:
       - input: ref('stg_orders')
         rows:
-          - {order_id: O1, customer_id: C1, product_id: P1, quantity: 7, unit_price: 10.00, discount_pct: 0.10, order_total: 63.00, currency: USD, payment_method: card, order_status: placed,    order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-01 10:00:00", loaded_at: "2025-01-02 02:00:00", is_deleted: false}
-          - {order_id: O1, customer_id: C1, product_id: P1, quantity: 1, unit_price: 10.00, discount_pct: 0.10, order_total: 9.00,  currency: USD, payment_method: card, order_status: placed,    order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-01 15:00:00", loaded_at: "2025-01-02 02:00:00", is_deleted: false}
-          - {order_id: O1, customer_id: C1, product_id: P1, quantity: 1, unit_price: 10.00, discount_pct: 0.10, order_total: 9.00,  currency: USD, payment_method: card, order_status: shipped,   order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-03 09:00:00", loaded_at: "2025-01-04 02:00:00", is_deleted: false}
-          - {order_id: O1, customer_id: C1, product_id: P1, quantity: 1, unit_price: 10.00, discount_pct: 0.10, order_total: 9.00,  currency: USD, payment_method: card, order_status: delivered, order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-06 12:00:00", loaded_at: "2025-01-07 02:00:00", is_deleted: false}
-          - {order_id: O1, customer_id: C1, product_id: P1, quantity: 1, unit_price: 10.00, discount_pct: 0.10, order_total: 9.00,  currency: USD, payment_method: card, order_status: returned,  order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-20 08:00:00", loaded_at: "2025-01-21 02:00:00", is_deleted: false}
+          - {order_id: O1, customer_id: C1, order_total: 63.00, currency: USD, payment_method: card, order_status: placed,    order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-01 10:00:00", loaded_at: "2025-01-02 02:00:00", is_deleted: false}
+          - {order_id: O1, customer_id: C1, order_total: 9.00,  currency: USD, payment_method: card, order_status: placed,    order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-01 15:00:00", loaded_at: "2025-01-02 02:00:00", is_deleted: false}
+          - {order_id: O1, customer_id: C1, order_total: 9.00,  currency: USD, payment_method: card, order_status: shipped,   order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-03 09:00:00", loaded_at: "2025-01-04 02:00:00", is_deleted: false}
+          - {order_id: O1, customer_id: C1, order_total: 9.00,  currency: USD, payment_method: card, order_status: delivered, order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-06 12:00:00", loaded_at: "2025-01-07 02:00:00", is_deleted: false}
+          - {order_id: O1, customer_id: C1, order_total: 9.00,  currency: USD, payment_method: card, order_status: returned,  order_placed_at: "2025-01-01 10:00:00", updated_at: "2025-01-20 08:00:00", loaded_at: "2025-01-21 02:00:00", is_deleted: false}
     expect:
       rows:
         - order_id: O1
           order_status: returned
-          quantity: 1
-          gross_amount: 10.00
-          discount_amount: 1.00
-          net_amount: 9.00
+          order_total: 9.00
           shipped_at: "2025-01-03 09:00:00"
           delivered_at: "2025-01-06 12:00:00"
           cancelled_at: null
@@ -79,3 +76,29 @@ unit_tests:
           change_count: 5
           is_open: false
           is_returned: true
+
+  - name: int_order_lines_keeps_the_corrected_line_and_its_return
+    description: >
+      A line is placed with the wrong quantity, corrected, then returned on
+      its own. The roll-up must keep the corrected amounts and record the
+      return.
+    model: int_order_lines
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: ref('stg_order_lines')
+        rows:
+          - {order_line_id: O1-2, order_id: O1, line_number: 2, product_id: P2, quantity: 7, unit_price: 10.00, discount_pct: 0.10, line_total: 63.00, line_status: active,   updated_at: "2025-01-01 10:00:00", loaded_at: "2025-01-02 02:00:00", is_deleted: false}
+          - {order_line_id: O1-2, order_id: O1, line_number: 2, product_id: P2, quantity: 1, unit_price: 10.00, discount_pct: 0.10, line_total: 9.00,  line_status: active,   updated_at: "2025-01-01 15:00:00", loaded_at: "2025-01-02 02:00:00", is_deleted: false}
+          - {order_line_id: O1-2, order_id: O1, line_number: 2, product_id: P2, quantity: 1, unit_price: 10.00, discount_pct: 0.10, line_total: 9.00,  line_status: returned, updated_at: "2025-01-20 08:00:00", loaded_at: "2025-01-21 02:00:00", is_deleted: false}
+    expect:
+      rows:
+        - order_line_id: O1-2
+          quantity: 1
+          gross_amount: 10.00
+          discount_amount: 1.00
+          net_amount: 9.00
+          is_line_returned: true
+          line_returned_at: "2025-01-20 08:00:00"
+          line_change_count: 3
