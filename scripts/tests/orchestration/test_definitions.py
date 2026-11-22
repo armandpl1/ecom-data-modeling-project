@@ -219,6 +219,30 @@ def test_cdc_runs_on_its_own_schedule_not_in_the_daily_pipeline() -> None:
     assert cdc.asset_layer.selected_asset_keys == {dg.AssetKey("cdc_changes")}
 
 
+def test_cdc_changes_fails_on_a_source_type_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cdc_consumer import BatchResult, TablesBlocked, TypeChange
+
+    def blocked(bootstrap, database, max_events):
+        change = TypeChange("orders", "quantity", "integer", "string", 7)
+        raise TablesBlocked([BatchResult("orders", None, 0, 0)], [change])
+
+    monkeypatch.setattr(definitions.cdc_consumer, "run_once", blocked)
+    paths = WarehousePaths(raw_dir=str(tmp_path), database=str(tmp_path / "w.duckdb"))
+    result = dg.materialize(
+        [cdc_changes],
+        resources={"paths": paths, "cdc": CdcSettings()},
+        instance=dg.DagsterInstance.ephemeral(),
+        raise_on_error=False,
+    )
+    assert not result.success
+    [failure] = [e for e in result.all_events if e.event_type_value == "STEP_FAILURE"]
+    message = failure.event_specific_data.error.message
+    assert "orders.quantity expected integer, got string" in message
+    assert "cdc-type-change.md" in message
+
+
 def test_cdc_changes_reports_what_it_loaded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -247,27 +271,3 @@ def test_cdc_changes_reports_what_it_loaded(
         "database": tmp_path / "w.duckdb",
         "max_events": 10,
     }
-
-
-def test_cdc_changes_fails_on_a_source_type_change(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from cdc_consumer import BatchResult, TablesBlocked, TypeChange
-
-    def blocked(bootstrap, database, max_events):
-        change = TypeChange("orders", "quantity", "integer", "string", 7)
-        raise TablesBlocked([BatchResult("orders", None, 0, 0)], [change])
-
-    monkeypatch.setattr(definitions.cdc_consumer, "run_once", blocked)
-    paths = WarehousePaths(raw_dir=str(tmp_path), database=str(tmp_path / "w.duckdb"))
-    result = dg.materialize(
-        [cdc_changes],
-        resources={"paths": paths, "cdc": CdcSettings()},
-        instance=dg.DagsterInstance.ephemeral(),
-        raise_on_error=False,
-    )
-    assert not result.success
-    [failure] = [e for e in result.all_events if e.event_type_value == "STEP_FAILURE"]
-    message = failure.event_specific_data.error.message
-    assert "orders.quantity expected integer, got string" in message
-    assert "cdc-type-change.md" in message
