@@ -449,6 +449,67 @@ partitioning, reruns, time travel, schema evolution and widening, the guard
 blocking a dropped column and a type change, snapshot expiry, and the
 publish ids.
 
+## Airflow version of the pipeline
+
+Dagster is the main orchestrator. `airflow/` runs the same daily pipeline
+in Apache Airflow 3.3, because many teams use Airflow:
+
+```
+generate_extracts -> load_raw -> dbt (each model: run, then its tests) -> check_service_levels
+                                                                        -> publish_iceberg
+```
+
+```bash
+make airflow-init   # Airflow + Astronomer Cosmos in airflow/.venv, metadata database
+make airflow-test   # DAG integrity tests
+make airflow-run    # run every task once, in order (airflow dags test)
+make airflow-ui     # UI and scheduler at http://localhost:8080
+```
+
+- **Its own environment.** Airflow pins hundreds of packages, so it lives in
+  `airflow/` with its own `pyproject.toml` and `uv.lock`. Every task runs the
+  main project's scripts and dbt with the main environment; the DAG never
+  imports project code.
+- **dbt as tasks (Cosmos).** Astronomer Cosmos renders each dbt model as a
+  task, followed by a task for its tests, from `target/manifest.json` (so
+  loading the DAG never runs dbt: 0.35 s to parse the project). A test that
+  spans several models, like a fact-to-dimension relationship, gets its own
+  task after all of them. A failing test stops only what is downstream of it,
+  and a retry reruns one model, not the whole build.
+- **Run policy.** 06:00 Toronto time, no catch-up of missed days, one run at
+  a time, 2 retries per task 5 minutes apart, and a failure callback that
+  posts to `ALERT_WEBHOOK_URL` (Slack-compatible), like the Dagster sensor.
+- **Idempotent.** Reruns and retries are safe: the loader skips extracts it
+  already has, incremental models only read new rows, and the Iceberg
+  publish skips unchanged tables.
+- **Service levels.** The DAG checks the data objectives with
+  `check_slos.py --skip dbt_tests`: a failing dbt test already fails its own
+  task, so that objective would only repeat it.
+
+| Dagster (`scripts/orchestration/`) | Airflow (`airflow/dags/ecom_daily.py`) |
+| ---------------------------------- | -------------------------------------- |
+| Asset                              | Task                                   |
+| dbt assets (dagster-dbt)           | `DbtTaskGroup` (Cosmos)                |
+| Asset check (a dbt test)           | A test task after each model           |
+| Job + schedule                     | DAG + `schedule`                       |
+| Run failure sensor                 | `on_failure_callback`                  |
+| Lineage between assets             | Task dependencies (`>>`)               |
+
+Two problems came up and are fixed: loading the DAG timed out because
+Cosmos's `dbt ls` mode hashes the whole project folder, virtual environments
+included (fixed by rendering from the manifest), and with dbt's default
+test selection a dimension's test task also ran relationship tests from
+facts not built yet (fixed with cautious selection and detached
+multi-model tests).
+
+**Measured:** one `make airflow-run` from an empty warehouse ran all 74
+tasks (4 pipeline steps, a run and a test task per dbt model, and the
+multi-model tests) with no failures or retries in 9 min 56 s, and produced
+the same Gold row counts as `make build` (10,573 order lines, 5,998 orders,
+2,484 customer versions). It is slower than one `dbt build` (about 40 s)
+because each task is its own dbt call; the gain is per-model retries and
+visibility, not speed.
+
 ## Infrastructure as code (Terraform)
 
 `infra/terraform/` defines the AWS resources the pipeline would run on:
@@ -1061,6 +1122,7 @@ test ──┘
 | `dbt`         | Generate data, load the raw layer, `dbt parse`, `dbt build` (all models, data and unit tests), the Iceberg publish and check, the incremental-vs-full-refresh check, the Dagster pipeline end to end, docs site | `deploy-docs`          |
 | `slim`        | Pull requests only: `dbt build --select state:modified+ --defer` against the prod warehouse built on `main` (see Environments below)                                                                            | nothing (not required) |
 | `terraform`   | `infra/terraform`: fmt, validate, Trivy scan, apply to the Moto emulator, a clean second plan, `check_infra.py`, idempotent uploads                                                                             | nothing (not required) |
+| `airflow`     | Airflow + Cosmos in their own environment, DAG integrity tests, then one full run of the DAG                                                                                                                    | nothing (not required) |
 | `deploy-docs` | Publishes the dbt docs site to GitHub Pages. Only on `main`, only after every job passes                                                                                                                        | (deploys)              |
 
 **Environments and slim CI.** `profiles.yml` has three targets:
@@ -1123,6 +1185,7 @@ make check-incremental  # incremental runs vs a full refresh: Gold must be ident
 make prod-state         # build a local prod warehouse and manifest (what CI does on main)
 make slim-build         # build only what changed since prod-state/, deferring to prod
 make infra-up           # Terraform on an AWS emulator (then make infra-check)
+make airflow-run        # the Airflow version of the pipeline, once (after make airflow-init)
 make check-late-dimensions  # early-arriving facts: unknown member, warning, then re-pointed
 make check-slos         # service-level objectives; each breach names its runbook
 make metrics            # validate the semantic layer and export dashboard datasets
@@ -1237,6 +1300,7 @@ scripts/publish_iceberg.py     publishes Gold as Apache Iceberg tables, with a s
 scripts/check_iceberg.py       proves the Iceberg tables match Gold
 ops/lakehouse.yml              Iceberg warehouse, catalog, partitions and snapshot retention
 infra/terraform/               Terraform: S3 buckets, KMS key, pipeline IAM role (AWS emulator by default)
+airflow/                       Airflow version of the pipeline: DAG, tests, its own uv environment
 infra/docker-compose.yml       Moto, the AWS emulator the Terraform is applied to
 scripts/check_infra.py         checks the AWS resources are safe and least privilege
 scripts/upload_extracts.py     uploads the extracts to the raw bucket, content-addressed

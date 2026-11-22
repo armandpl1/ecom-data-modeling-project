@@ -4,7 +4,7 @@
 export UV_PROJECT_ENVIRONMENT := deenv
 RUN := uv run
 
-.PHONY: help install hooks lint test data load build check-slos infra-up infra-plan infra-check upload-extracts infra-down prod-state slim-build check-incremental check-late-dimensions iceberg check-iceberg pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag cdc-e2e
+.PHONY: help install hooks lint test data load build check-slos airflow-init airflow-test airflow-run airflow-ui infra-up infra-plan infra-check upload-extracts infra-down prod-state slim-build check-incremental check-late-dimensions iceberg check-iceberg pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag cdc-e2e
 
 help:  ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -117,6 +117,27 @@ infra-down:  ## Stop the emulator (its data is wiped) and forget the local Terra
 	# Not `terraform destroy`: it rightly refuses to delete buckets that hold data
 	$(AWS_LOCAL) down -v
 	rm -f infra/terraform/terraform.tfstate infra/terraform/terraform.tfstate.backup
+
+# Airflow runs in its own environment (airflow/.venv), state in airflow/.airflow
+AIRFLOW_ENV := AIRFLOW_HOME=$(CURDIR)/airflow/.airflow AIRFLOW__CORE__DAGS_FOLDER=$(CURDIR)/airflow/dags \
+	AIRFLOW__CORE__LOAD_EXAMPLES=False AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT=120
+AIRFLOW := $(AIRFLOW_ENV) airflow/.venv/bin/airflow
+
+airflow-init:  ## Install Airflow + Cosmos in airflow/.venv and create its metadata database
+	UV_PROJECT_ENVIRONMENT=.venv uv sync --project airflow
+	uv run dbt parse --quiet
+	$(AIRFLOW) db migrate
+
+airflow-test:  ## DAG integrity tests (loads, schedule, retries, every dbt model is a task)
+	uv run dbt parse --quiet
+	$(AIRFLOW_ENV) airflow/.venv/bin/python -m pytest -q airflow/tests
+
+airflow-run:  ## Run the ecom_daily DAG once, every task in order (airflow dags test)
+	uv run dbt parse --quiet
+	$(AIRFLOW) dags test ecom_daily
+
+airflow-ui:  ## Airflow UI at http://localhost:8080 (scheduler included; login shown in the output)
+	$(AIRFLOW) standalone
 
 check-incremental:  ## Prove incremental runs give the same Gold tables as a full refresh
 	$(RUN) python scripts/check_incremental.py

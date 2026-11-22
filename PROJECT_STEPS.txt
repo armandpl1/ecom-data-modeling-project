@@ -570,6 +570,30 @@ restores it.
 
 ---
 
+## Step 21: Airflow version of the pipeline ✅
+
+**Goal:** the same daily pipeline in Apache Airflow, the most common
+orchestrator in job postings, with Dagster staying the main one.
+
+1. `airflow/`: its own uv project (Airflow 3.3.2, Astronomer Cosmos 1.15.1)
+   and lock file, so Airflow's pins never touch the main environment.
+2. `airflow/dags/ecom_daily.py`: generate -> load -> dbt (Cosmos, each model
+   a task with a test task after it, multi-model tests detached) -> SLOs and
+   the Iceberg publish. 06:00 Toronto, no catch-up, one run at a time, 2
+   retries, failure callback to `ALERT_WEBHOOK_URL`.
+3. Tasks run the main project's scripts and dbt with its environment
+   (`deenv`, or `.venv` in CI). Cosmos reads `target/manifest.json`.
+4. `check_slos.py --skip`: the DAG leaves out `dbt_tests` (the dbt tasks
+   already fail the run on a failing test).
+5. `make airflow-init`, `airflow-test`, `airflow-run`, `airflow-ui`; CI job
+   `airflow` (not required); `airflow/tests/test_ecom_daily.py` (5 tests).
+
+**Check:** `make airflow-test` (5 passed), then `make airflow-run` on an
+empty warehouse: 74 of 74 tasks succeeded in 9 min 56 s, with the same Gold
+row counts as `make build`.
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in

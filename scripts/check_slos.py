@@ -219,8 +219,12 @@ def evaluate(
     config: dict,
     reference: str | None = None,
     as_of: str | None = None,
+    skip: tuple[str, ...] = (),
 ) -> dict:
+    """Evaluate every objective except those named in `skip`."""
     objectives = config["objectives"]
+    if unknown := sorted(set(skip) - set(objectives)):
+        raise ValueError(f"unknown objectives to skip: {unknown}")
     with duckdb.connect(str(database), read_only=True) as con:
         ref = reference_time(con, reference or config["reference"], as_of)
         results = (
@@ -229,6 +233,7 @@ def evaluate(
             + check_warehouse_caught_up(con, objectives["warehouse_caught_up"])
         )
     results += check_dbt_tests(run_results, objectives["dbt_tests"])
+    results = [r for r in results if r.objective not in skip]
     return {
         "reference": str(ref),
         "breached": sum(not r.met for r in results),
@@ -267,6 +272,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reference", choices=["latest_load", "now"])
     parser.add_argument("--as-of", help="reference time, e.g. '2026-11-01 06:00:00'")
     parser.add_argument("--json", type=Path, help="also write the report here")
+    parser.add_argument(
+        "--skip",
+        action="append",
+        default=[],
+        help="objective to leave out, e.g. dbt_tests when the orchestrator "
+        "already fails the run on a failing test (repeatable)",
+    )
     args = parser.parse_args(argv)
 
     if not args.database.exists():
@@ -279,6 +291,7 @@ def main(argv: list[str] | None = None) -> int:
             load_config(args.config),
             args.reference,
             args.as_of,
+            tuple(args.skip),
         )
     except duckdb.CatalogException as err:
         print(f"Raw layer missing in {args.database}: {err}", file=sys.stderr)
