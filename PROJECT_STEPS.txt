@@ -378,6 +378,43 @@ change blocks `orders` until allowed, and `dbt build` still passes (3 min
 
 ---
 
+## Step 14: Gold as Apache Iceberg tables ✅
+
+**Goal:** make Gold readable by any engine, not only DuckDB, with versions,
+time travel and a guard against breaking schema changes (gap 15 in
+IMPROVEMENTS.txt).
+
+1. `ops/lakehouse.yml`: warehouse `data/lakehouse`, a SQLite catalog
+   (PyIceberg `SqlCatalog`), namespace `gold`, partitions, `keep_publishes: 5`.
+2. `scripts/publish_iceberg.py` (`make iceberg`): reads each Gold table
+   sorted by every column, skips it if its content hash (computed by DuckDB
+   from the values) matches the current snapshot, else overwrites it in one
+   atomic commit. Snapshots record `publish-id` (the dbt invocation id) and
+   `content-sha256`; each table records `last-publish-id`, even if unchanged.
+3. Schema guard, checked for every table before any is written: new columns
+   are added, safe widening (int to bigint, float to double, decimal
+   precision) is applied, a dropped column or any other type change stops
+   the publish with exit 1.
+4. Partitions: `fact_orders` by month of `order_placed_at`,
+   `fact_subscription_mrr_monthly` by month of `month_start`.
+5. Snapshots of publishes older than the last 5 are expired.
+6. `scripts/check_iceberg.py` (`make check-iceberg`): DuckDB's `iceberg`
+   extension reads each table back; EXCEPT ALL against Gold both ways must
+   be empty, and all `last-publish-id`s must match. Also reads the previous
+   publish (time travel) when there is one.
+7. Dagster: `gold_iceberg` asset after `dbt_models`, in `daily_pipeline`.
+8. CI (`dbt build and test` job): publish, rerun (must change nothing), check.
+9. Tests (`scripts/tests/test_publish_iceberg.py`, 7): partitions and
+   no-op reruns, time travel, evolution and widening, the guard, expiry,
+   publish ids; plus a Dagster test that `gold_iceberg` follows dbt.
+
+**Check:** `make build && make iceberg && make iceberg && make check-iceberg`:
+6 created, then 6 unchanged, then 6 of 6 tables identical to Gold, all with
+the same publish id. Publishing takes about 7 s and 2.2 MB; a June 2025 query
+on `fact_orders` plans 1 of 34 data files.
+
+---
+
 ## Next steps
 
 The gaps that remain, and the recommended solution for each, are in

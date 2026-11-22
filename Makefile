@@ -4,7 +4,7 @@
 export UV_PROJECT_ENVIRONMENT := deenv
 RUN := uv run
 
-.PHONY: help install hooks lint test data load build check-slos check-incremental pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag cdc-e2e
+.PHONY: help install hooks lint test data load build check-slos check-incremental iceberg check-iceberg pipeline orchestrate docs ci clean metrics dashboard dashboard-dev cdc-up cdc-down cdc-replay cdc-load cdc-lag cdc-e2e
 
 help:  ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -72,6 +72,12 @@ cdc-e2e:  ## Full CDC check on a fresh stack: Gold equals the CSV path, exactly 
 
 cdc-lag:  ## Measure commit-to-raw lag (run the consumer with --follow meanwhile; DB=path)
 	$(RUN) python scripts/cdc_lag.py --database $(or $(DB),ecom.duckdb)
+
+iceberg:  ## Publish the Gold tables as Apache Iceberg tables in data/lakehouse (reruns are safe)
+	uv run python scripts/publish_iceberg.py
+
+check-iceberg:  ## Prove the Iceberg tables match Gold, read back by DuckDB's iceberg extension
+	uv run python scripts/check_iceberg.py
 
 check-incremental:  ## Prove incremental runs give the same Gold tables as a full refresh
 	$(RUN) python scripts/check_incremental.py

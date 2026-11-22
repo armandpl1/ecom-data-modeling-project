@@ -1,0 +1,28 @@
+# Gold as Apache Iceberg tables, written by scripts/publish_iceberg.py
+# (`make iceberg`) and checked by scripts/check_iceberg.py (`make check-iceberg`).
+#
+# Iceberg is an open table format: Parquet data files plus metadata files that
+# record every version (snapshot) of a table. Any engine that reads Iceberg
+# (DuckDB, Spark, Trino, Snowflake, Databricks) can query these tables without
+# going through ecom.duckdb.
+
+# Paths are relative to the repository root. data/ is not committed.
+warehouse: data/lakehouse          # Parquet data files and Iceberg metadata
+catalog: data/lakehouse/catalog.db  # SQLite catalog: table name -> current metadata file
+namespace: gold
+
+# Snapshots of the last `keep_publishes` publishes are kept for time travel;
+# older ones are expired (their files stop being referenced).
+keep_publishes: 5
+
+# One entry per Gold table. `partition_by` splits the data files by month of
+# a date or timestamp column, so a query on one month reads only its files.
+tables:
+  dim_customer: {}
+  dim_date: {}
+  dim_product: {}
+  fact_orders:
+    partition_by: {column: order_placed_at, transform: month}
+  fact_subscriptions: {}
+  fact_subscription_mrr_monthly:
+    partition_by: {column: month_start, transform: month}

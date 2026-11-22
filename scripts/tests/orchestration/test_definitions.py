@@ -14,6 +14,7 @@ from orchestration.definitions import (
     daily_pipeline,
     defs,
     failure_message,
+    gold_iceberg,
     raw_layer,
     send_alert,
     service_levels,
@@ -271,3 +272,10 @@ def test_cdc_changes_reports_what_it_loaded(
         "database": tmp_path / "w.duckdb",
         "max_events": 10,
     }
+
+
+def test_gold_is_published_to_iceberg_after_dbt(graph) -> None:
+    parents = graph.get(gold_iceberg.key).parent_keys
+    assert set(keys_named(graph, "fact_orders")) <= parents  # waits for every dbt model
+    job = defs.get_job_def(daily_pipeline.name)
+    assert gold_iceberg.key in job.asset_layer.selected_asset_keys

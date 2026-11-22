@@ -12,6 +12,8 @@
   lineage graph runs from the files to the Gold tables.
 - dbt_models runs `dbt build`; every model is an asset and every dbt test
   becomes an asset check.
+- gold_iceberg publishes the Gold tables as Apache Iceberg tables
+  (scripts/publish_iceberg.py); a breaking schema change fails the run.
 - daily_pipeline materializes everything; daily_schedule runs it at 06:00
   Toronto time (stopped by default, so nothing runs unless you turn it on).
 - cdc_changes loads new change events from Redpanda into the same raw
@@ -37,6 +39,7 @@ import cdc_consumer
 import check_slos
 import dagster as dg
 import generate_raw_data
+import publish_iceberg
 from dagster_dbt import DbtCliResource, DbtProject, dbt_assets
 from load_raw import TABLES, load_all
 
@@ -156,6 +159,34 @@ def service_levels(paths: WarehousePaths) -> dg.MaterializeResult:
     return dg.MaterializeResult(metadata=metadata)
 
 
+@dg.asset(
+    deps=[dbt_models],
+    group_name="lakehouse",
+    description=(
+        "Publishes the Gold tables as Apache Iceberg tables (ops/lakehouse.yml). "
+        "A breaking schema change fails the run and nothing is written."
+    ),
+)
+def gold_iceberg(paths: WarehousePaths) -> dg.MaterializeResult:
+    try:
+        outcomes = publish_iceberg.publish(
+            Path(paths.database),
+            publish_iceberg.load_config(),
+            pid=publish_iceberg.publish_id(Path(paths.run_results)),
+        )
+    except publish_iceberg.SchemaGuardError as err:
+        raise dg.Failure(
+            description="Iceberg schema guard: " + "; ".join(err.problems)
+        ) from err
+    return dg.MaterializeResult(
+        metadata={
+            o.table: f"{o.action}, {o.rows} rows"
+            + (f", added {', '.join(o.added_columns)}" if o.added_columns else "")
+            for o in outcomes
+        }
+    )
+
+
 CDC_GROUP = "cdc"
 
 
@@ -218,7 +249,7 @@ daily_pipeline = dg.define_asset_job(
     selection=dg.AssetSelection.all() - dg.AssetSelection.groups(CDC_GROUP),
     description=(
         "Generate extracts, load the raw layer, dbt build with all tests, then "
-        "check the service-level objectives."
+        "check the service-level objectives and publish Gold as Iceberg."
     ),
 )
 
@@ -266,7 +297,14 @@ def alert_on_failure(context: dg.RunFailureSensorContext) -> None:
 
 
 defs = dg.Definitions(
-    assets=[source_extracts, raw_layer, dbt_models, service_levels, cdc_changes],
+    assets=[
+        source_extracts,
+        raw_layer,
+        dbt_models,
+        service_levels,
+        gold_iceberg,
+        cdc_changes,
+    ],
     jobs=[daily_pipeline, cdc_load],
     schedules=[daily_schedule, cdc_schedule],
     sensors=[alert_on_failure],

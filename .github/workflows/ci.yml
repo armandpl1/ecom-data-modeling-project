@@ -133,6 +133,19 @@ jobs:
           mkdir -p target
           uv run python scripts/check_slos.py --json target/slo_report.json
 
+      - name: Publish Gold as Apache Iceberg tables and check them
+        # Writes data/lakehouse (Parquet + Iceberg metadata, SQLite catalog),
+        # then reads every table back with DuckDB's iceberg extension: each
+        # must equal its Gold table row for row. A rerun must change nothing.
+        run: |
+          make iceberg
+          make iceberg | tee target/iceberg_rerun.txt
+          if grep -E ' (created|updated) ' target/iceberg_rerun.txt; then
+            echo "::error::Rerunning the Iceberg publish changed tables"
+            exit 1
+          fi
+          make check-iceberg
+
       - name: Validate the semantic layer and export its metrics
         # MetricFlow checks every semantic model and metric against the built
         # warehouse, then the dashboard's datasets are exported as CSV.
@@ -160,6 +173,7 @@ jobs:
           path: |
             target/run_results.json
             target/slo_report.json
+            target/iceberg_rerun.txt
             target/manifest.json
             dashboard/sources/metrics/*.csv
             target/catalog.json

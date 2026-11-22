@@ -27,9 +27,23 @@ solution, and alternatives that were considered.
 | 12 | SQL is tied to DuckDB                  | Low    | Medium | 12       |
 | 13 | Single-product orders only             | Low    | Small  | 13       |
 | 14 | File extracts only, no CDC (done)      | High   | Large  | 14       |
+| 15 | Gold readable by DuckDB only (done)    | Medium | Medium | 15       |
 
 Gaps 1 and 2 belong together: incremental models need a raw layer that
 keeps every load.
+
+---
+
+## 15. Gold is readable by DuckDB only
+
+**Status: done (Step 14 in PROJECT_STEPS.txt).** Gold is also published as
+Apache Iceberg tables (PyIceberg, SQLite catalog), checked row for row by
+DuckDB's iceberg extension, with partitions, time travel over the last 5
+publishes, and a schema guard that blocks dropped columns and unsafe type
+changes. Still open: the catalog is a local SQLite file, so other engines
+need the same filesystem. Next step: a REST catalog (or AWS Glue with S3
+storage, which pairs with Terraform), and running a Spark or Trino query
+against the same tables to prove the interoperability.
 
 ---
 
