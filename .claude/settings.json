@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "UV_PROJECT_ENVIRONMENT": "deenv"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(make help)",
+      "Bash(make lint)",
+      "Bash(make test)",
+      "Bash(make build)",
+      "Bash(make ci)",
+      "Bash(uv run dbt parse*)",
+      "Bash(uv run dbt build*)",
+      "Bash(uv run dbt test*)",
+      "Bash(uv run dbt compile*)",
+      "Bash(uv run dbt ls*)",
+      "Bash(uv run dbt show*)",
+      "Bash(uv run pytest*)",
+      "Bash(uv run sqlfluff lint*)",
+      "Bash(uv run sqlfluff fix*)",
+      "Bash(uv run ruff check*)",
+      "Bash(uv run black*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git branch*)",
+      "Bash(git show*)"
+    ],
+    "deny": [
+      "Read(./.env.databricks)",
+      "Edit(./.env.databricks)",
+      "Edit(./uv.lock)",
+      "Write(./uv.lock)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_bash.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && python3 .claude/hooks/lint_python.py",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && python3 .claude/hooks/lint_sql_on_stop.py",
+            "timeout": 180
+          }
+        ]
+      }
+    ]
+  }
+}

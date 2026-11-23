@@ -1393,4 +1393,6 @@ PROJECT_STEPS.txt              how the project was built, step by step
 IMPROVEMENTS.txt               remaining gaps and recommended solutions
 LEARNING_GUIDE.txt             how to learn this repo, step by step
 AGENTS.md                      standards for anyone (or any AI agent) changing this repo
+CLAUDE.md                      loads AGENTS.md for Claude Code
+.claude/                       agent harness: settings, hooks, subagents, skills (see AGENTS.md)
 ```
