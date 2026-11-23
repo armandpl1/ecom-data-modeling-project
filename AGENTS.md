@@ -80,7 +80,15 @@ on every change.
 - **Merging to `main` redeploys the docs site:**
   https://armandpl1.github.io/ecom-data-modeling-project/
 
-## Harnesses
+## Harness
+
+The harness is everything that runs around an agent working in this repo:
+the commands it verifies with, the settings and hooks that enforce the rules
+above, and the subagents and skills that package the repo's workflows.
+Claude Code loads it from `CLAUDE.md` (which imports this file) and
+`.claude/`. Other agents should read this file and follow the same rules.
+
+### Commands
 
 | Tool                                  | Use it to                                                   |
 | ------------------------------------- | ----------------------------------------------------------- |
@@ -91,3 +99,60 @@ on every change.
 | `pytest`                              | Test the data generator, including its output fingerprint   |
 | `analyses/`                           | Ad-hoc SQL backing README claims (e.g. the 28% SCD2 impact) |
 | `test_failures` schema                | Inspect the failing rows of any dbt test with plain SQL     |
+
+### Settings and hooks (`.claude/settings.json`)
+
+These are enforced by Claude Code, not left to the agent's memory.
+
+| Piece                                 | What it does                                                                                                     |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `env`                                 | Sets `UV_PROJECT_ENVIRONMENT=deenv` for every command                                                            |
+| `permissions.allow`                   | Runs read-only and verify commands (`make ci`, `uv run dbt build`, `git diff`) without a prompt                  |
+| `permissions.deny`                    | Never reads `.env.databricks`; never edits `uv.lock` by hand                                                     |
+| `hooks/guard_bash.py` (before Bash)   | Blocks `--target prod`, force push, push to `main`, `git add -f`, pip, AI attribution, reading `.env.databricks` |
+| `hooks/lint_python.py` (after edits)  | Runs ruff and black on each edited `.py` file and reports failures at once                                       |
+| `hooks/lint_sql_on_stop.py` (on stop) | Runs sqlfluff once on all changed SQL before the agent hands back (dbt templater is too slow per edit)           |
+
+Personal overrides go in `.claude/settings.local.json` (git-ignored).
+
+### Subagents (`.claude/agents/`)
+
+| Agent                | Use it to                                                    | Can edit |
+| -------------------- | ------------------------------------------------------------ | -------- |
+| `dbt-modeler`        | Add or change models, macros and tests under the layer rules | yes      |
+| `verifier`           | Run the real checks and report measured results only         | no       |
+| `standards-reviewer` | Review the branch against this file before a commit or PR    | no       |
+| `docs-keeper`        | Update README and the guides after a verified change         | docs     |
+
+### Skills (`.claude/skills/`)
+
+| Skill                    | Use it when                                                      |
+| ------------------------ | ---------------------------------------------------------------- |
+| `add-dbt-model`          | Creating a model or changing its columns, grain or logic         |
+| `add-scd2-history`       | Adding SCD2 history or changing tracked columns                  |
+| `debug-dbt-test-failure` | `dbt build` reports FAIL, WARN or ERROR                          |
+| `verify-before-commit`   | Choosing which checks a change needs, and reporting them         |
+| `update-project-guides`  | Choosing which documents a change touches                        |
+| `ship-pr`                | The owner asks to commit, push or open a PR (owner-invoked only) |
+
+## Agent guidelines
+
+1. **This file wins.** If a skill, agent prompt or habit disagrees with
+   AGENTS.md, follow AGENTS.md and fix the skill.
+2. **Follow the loop:** plan → build (`dbt-modeler`) → verify (`verifier`)
+   → document (`docs-keeper`) → review (`standards-reviewer`) → commit only
+   when the owner asks (`ship-pr`).
+3. **Measured or nothing.** A number, a "tests pass" or a "works" claim needs
+   a command run in the same session. Say "not run" for checks you skipped.
+4. **Don't work around the harness.** If a hook blocks a command, change the
+   approach; don't rephrase the command to slip past it. Never commit with
+   `--no-verify`.
+5. **Stay in scope.** Change what the task needs. Don't reformat unrelated
+   files or change the data generator's output as a side effect.
+6. **Ask before** anything outward-facing or hard to undo: pushing,
+   opening or merging PRs, Databricks or AWS calls, deleting data
+   (`make clean`, `make cdc-down`, `make infra-down`).
+7. **Local-only files stay local:** `GAP_PLAN.md`, `STUDY_GUIDE.md`,
+   `study_guide/` (in `.git/info/exclude`) and `.env.databricks`.
+8. **Keep the harness current.** A new standard, command or workflow means
+   updating this file and the matching skill in the same change.
