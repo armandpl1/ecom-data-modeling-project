@@ -2,10 +2,11 @@
 
 The generator writes five CSVs to `data/raw/`, which load into `raw.*`. Each
 file is a **change log**: one row per version of a record, never an in-place
-edit. The diagram shows the business keys. Every table also has the three
-metadata columns described below.
+edit. The diagram shows only the keys; the full column lists follow it. Every
+table also has the three metadata columns described below.
 
 ```mermaid
+%%{init: {"er": {"fontSize": 18}}}%%
 erDiagram
     customers ||--o{ orders : "places"
     customers ||--o| subscriptions : "has"
@@ -13,70 +14,102 @@ erDiagram
     products ||--o{ order_lines : "appears in"
 
     customers {
-        string customer_id PK "C00001"
-        string first_name
-        string last_name
-        string email
-        string phone
-        string street_address
-        string city
-        string state
-        string postal_code
-        string country
-        string customer_segment "consumer, small_business, enterprise"
-        boolean marketing_opt_in
-        timestamp created_at
+        string customer_id PK
     }
-
     products {
         string product_id PK
-        string sku "one SKU per product"
-        string product_name
-        string category
-        decimal unit_price "changes over time"
-        string currency
-        boolean is_active
-        timestamp created_at
     }
-
     orders {
-        string order_id PK "O000001"
+        string order_id PK
         string customer_id FK
-        decimal order_total "= sum of line_total"
-        string currency
-        string payment_method
-        string status "placed, shipped, delivered, cancelled, returned"
-        timestamp order_placed_at
     }
-
     order_lines {
-        string order_line_id PK "order_id-line_number"
+        string order_line_id PK
         string order_id FK
-        int line_number "1 to 5"
         string product_id FK
-        int quantity
-        decimal unit_price "product price on the order date"
-        decimal discount_pct
-        decimal line_total
-        string line_status "active, returned"
     }
-
     subscriptions {
         string subscription_id PK
         string customer_id FK
-        string plan_name "basic, plus, premium"
-        string billing_period
-        decimal mrr
-        string status
-        timestamp started_at
-        timestamp trial_ends_at
-        timestamp cancelled_at
-        timestamp created_at
     }
 ```
 
-The raw layer stores every column as text. The types above are what Bronze
+## Columns
+
+The raw layer stores every column as text. The types below are what Bronze
 casts them to.
+
+### customers
+
+| Column             | Type      | Notes                                  |
+| ------------------ | --------- | -------------------------------------- |
+| `customer_id`      | string    | PK, e.g. `C00001`                      |
+| `first_name`       | string    |                                        |
+| `last_name`        | string    |                                        |
+| `email`            | string    |                                        |
+| `phone`            | string    |                                        |
+| `street_address`   | string    |                                        |
+| `city`             | string    |                                        |
+| `state`            | string    |                                        |
+| `postal_code`      | string    |                                        |
+| `country`          | string    |                                        |
+| `customer_segment` | string    | consumer, small_business, enterprise   |
+| `marketing_opt_in` | boolean   |                                        |
+| `created_at`       | timestamp |                                        |
+
+### products
+
+| Column         | Type      | Notes              |
+| -------------- | --------- | ------------------ |
+| `product_id`   | string    | PK                 |
+| `sku`          | string    | one SKU per product |
+| `product_name` | string    |                    |
+| `category`     | string    |                    |
+| `unit_price`   | decimal   | changes over time  |
+| `currency`     | string    |                    |
+| `is_active`    | boolean   |                    |
+| `created_at`   | timestamp |                    |
+
+### orders
+
+| Column            | Type      | Notes                                         |
+| ----------------- | --------- | --------------------------------------------- |
+| `order_id`        | string    | PK, e.g. `O000001`                            |
+| `customer_id`     | string    | FK to `customers`                             |
+| `order_total`     | decimal   | = sum of `line_total`                         |
+| `currency`        | string    |                                               |
+| `payment_method`  | string    |                                               |
+| `status`          | string    | placed, shipped, delivered, cancelled, returned |
+| `order_placed_at` | timestamp |                                               |
+
+### order_lines
+
+| Column          | Type    | Notes                          |
+| --------------- | ------- | ------------------------------ |
+| `order_line_id` | string  | PK, `order_id-line_number`     |
+| `order_id`      | string  | FK to `orders`                 |
+| `line_number`   | int     | 1 to 5                         |
+| `product_id`    | string  | FK to `products`               |
+| `quantity`      | int     |                                |
+| `unit_price`    | decimal | product price on the order date |
+| `discount_pct`  | decimal |                                |
+| `line_total`    | decimal |                                |
+| `line_status`   | string  | active, returned               |
+
+### subscriptions
+
+| Column            | Type      | Notes                 |
+| ----------------- | --------- | --------------------- |
+| `subscription_id` | string    | PK                    |
+| `customer_id`     | string    | FK to `customers`     |
+| `plan_name`       | string    | basic, plus, premium  |
+| `billing_period`  | string    |                       |
+| `mrr`             | decimal   |                       |
+| `status`          | string    |                       |
+| `started_at`      | timestamp |                       |
+| `trial_ends_at`   | timestamp |                       |
+| `cancelled_at`    | timestamp |                       |
+| `created_at`      | timestamp |                       |
 
 ## Relationships
 
